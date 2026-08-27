@@ -410,7 +410,7 @@ StoragePerf/
 │   │   └── updates/                        ← check-and-notify version checker
 │   ├── web/                    ← embedded frontend (Go embed)
 │   ├── config/                 ← arrays.example.yml, arrays.demo.yml, thresholds/*.yml
-│   ├── scripts/                ← fetch-sidecars.sh, build-native.sh, run-demo.sh
+│   ├── scripts/                ← fetch-sidecars.sh, build-native.sh, run-demo.sh, dev/ (local dev launcher)
 │   └── dist/                   ← built platform packages (gitignored)
 ├── backend/                    ← original Python/FastAPI build (Docker path, Pure-only)
 ├── frontend/                   ← original frontend (Docker path; native/web/ is its own copy)
@@ -443,8 +443,7 @@ StoragePerf/
 cd native
 go build ./...                      # compile check
 go vet ./...                        # static analysis
-PLUMB_ROOT=$(pwd) PLUMB_SIDECARS_DIR=$(pwd)/sidecars/darwin_arm64 \
-  go run ./cmd/plumb                # run from source against real sidecar binaries
+go run ./scripts/dev                # build + run current source, always replacing whatever was previously running
 
 ./scripts/fetch-sidecars.sh         # download pinned Prometheus/VictoriaMetrics/Harvest releases
 ./scripts/build-native.sh           # cross-compile + package all 5 platforms

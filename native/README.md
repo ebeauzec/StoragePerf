@@ -17,6 +17,30 @@ buffer, logs, generated reports — lives under `data/` next to the
 executable. Move the whole folder and it keeps working; nothing is written
 outside it.
 
+## Local development — always run the current source
+
+Don't extract a release archive to iterate on the code — that's a snapshot,
+and it's easy to end up unknowingly testing yesterday's build in a
+random-versioned folder. Instead, from `native/`:
+
+```bash
+go run ./scripts/dev
+```
+
+This builds Plumb from whatever's currently in the source tree, always runs
+it from the same fixed location (`native/run/`, gitignored), and — critically
+— stops whatever it previously started there first, including the sidecar
+processes (Prometheus/VictoriaMetrics/Harvest), not just the top-level
+binary. Run it again after any change and you're always looking at current
+code; there's no version to track or stale copy to accidentally be running.
+Works the same way on Linux, macOS, and Windows — it's a Go program, not a
+shell script, so there's nothing platform-specific to invoke.
+
+`native/run/` seeds its own `config/` from `config/arrays.example.yml` and
+`sidecars/` from whatever's staged under `sidecars/<your-platform>/` (run
+`scripts/fetch-sidecars.sh` once first if that's empty) — separate from
+anything in `dist/`, so this never touches a packaged release.
+
 ## Multi-vendor support
 
 `vendor` on each array entry selects both the collection method and the

@@ -63,7 +63,10 @@ EOF
     cat > "$outdir/start.sh" <<'EOF'
 #!/usr/bin/env bash
 cd "$(dirname "${BASH_SOURCE[0]}")"
-./plumb
+# exec, not a plain call: this replaces the shell with plumb (same PID)
+# instead of running it as a child — otherwise killing/Ctrl+C-ing this
+# script leaves plumb (and its own sidecar children) running as orphans.
+exec ./plumb
 EOF
     chmod +x "$outdir/start.sh"
   fi
