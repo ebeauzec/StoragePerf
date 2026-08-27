@@ -32,7 +32,9 @@ const isNetApp = (v) => v === "netapp_ontap" || v === "netapp_storagegrid";
 
 function fmt(value, digits = 1) {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return value.toFixed(digits);
+  // whole-number values (queue depth, ops, object counts) are often in the
+  // thousands — group them so e.g. "141642" reads as "141,642"
+  return value.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 /* ---------------- SVG chart ---------------- */

@@ -69,13 +69,32 @@ func substitute(query, arrayID string) string {
 	return strings.ReplaceAll(query, "{array}", arrayID)
 }
 
+// commaInt formats a whole number with thousands separators — {value:.0f}
+// templates are used for count-style metrics (ops, objects, errors/min)
+// that are often in the thousands or more, where a bare Sprintf("%.0f")
+// like "141642" is hard to read at a glance.
+func commaInt(v float64) string {
+	s := fmt.Sprintf("%.0f", v)
+	neg := strings.HasPrefix(s, "-")
+	if neg {
+		s = s[1:]
+	}
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
+}
+
 func formatTemplate(tmpl string, value, threshold float64) string {
 	r := strings.NewReplacer(
 		"{value:.1f}", fmt.Sprintf("%.1f", value),
-		"{value:.0f}", fmt.Sprintf("%.0f", value),
+		"{value:.0f}", commaInt(value),
 		"{value:.2f}", fmt.Sprintf("%.2f", value),
 		"{threshold:.1f}", fmt.Sprintf("%.1f", threshold),
-		"{threshold:.0f}", fmt.Sprintf("%.0f", threshold),
+		"{threshold:.0f}", commaInt(threshold),
 		"{threshold:.2f}", fmt.Sprintf("%.2f", threshold),
 	)
 	return r.Replace(tmpl)
