@@ -151,20 +151,53 @@ a{color:inherit;}
 }
 
 /* config view */
-.config-row{
-  display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end;
-  background:var(--surface); border:1px solid var(--border); border-radius:9px;
-  padding:10px 12px; margin-bottom:8px;
+.config-card{
+  background:var(--surface); border:1px solid var(--border); border-radius:11px;
+  padding:14px 16px 16px; margin-bottom:10px; box-shadow:var(--shadow);
 }
-.config-row .config-field{ flex:1 1 150px; min-width:130px; }
-.config-row .btn-remove{ flex:0 0 auto; align-self:center; }
-.config-row input, .config-row select{
+.config-card-head{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding-bottom:12px; margin-bottom:14px; border-bottom:1px solid var(--border-soft);
+}
+.config-card-id{display:flex; align-items:center; gap:10px; min-width:0;}
+.config-card-id .mono{font-weight:600; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.config-vendor-select{
+  background:var(--surface-raised); border:1px solid var(--border); color:var(--accent-fe);
+  border-radius:20px; padding:4px 10px; font-size:11px; font-weight:600; text-transform:uppercase;
+  letter-spacing:0.03em; flex:none; cursor:pointer;
+}
+.config-grid{
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px 14px;
+}
+.config-field input, .config-field select{
   background:var(--surface-raised); border:1px solid var(--border); color:var(--text);
   border-radius:6px; padding:7px 9px; font-size:12.5px; font-family:"IBM Plex Mono"; width:100%;
 }
-.config-row input:focus, .config-row select:focus{outline:1px solid var(--accent-fe-dim);}
-.config-label{font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:3px; display:block;}
+.config-field input:focus, .config-field select:focus{outline:1px solid var(--accent-fe-dim);}
+.config-label{font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:5px; display:block;}
 .config-field{display:flex; flex-direction:column;}
+.config-field.span-2{grid-column:span 2;}
+
+.toggle-row{
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  padding:14px 16px; margin-bottom:14px;
+}
+.toggle-row-text .toggle-title{font-weight:600; font-size:13.5px;}
+.toggle-row-text .toggle-desc{font-size:12px; color:var(--text-dim); margin-top:3px; max-width:56ch;}
+.switch{position:relative; width:42px; height:24px; flex:none;}
+.switch input{position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer;}
+.switch .track{
+  position:absolute; inset:0; background:var(--surface-raised); border:1px solid var(--border);
+  border-radius:20px; transition:background .15s, border-color .15s; pointer-events:none;
+}
+.switch .thumb{
+  position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
+  background:var(--text-dim); transition:transform .15s, background .15s;
+}
+.switch input:checked ~ .track{background:rgba(69,208,196,0.18); border-color:var(--accent-fe-dim);}
+.switch input:checked ~ .track .thumb{transform:translateX(18px); background:var(--accent-fe);}
+.switch input:focus-visible ~ .track{outline:2px solid var(--accent-fe-dim); outline-offset:2px;}
 .btn{
   background:var(--surface); border:1px solid var(--border); color:var(--text);
   padding:9px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;

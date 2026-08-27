@@ -92,9 +92,6 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 	}
 
 	var panels []Panel
-	var findings []Finding
-	var severities []Severity
-
 	for _, m := range metrics {
 		query := substitute(m.Query, arr.ID)
 
@@ -103,7 +100,6 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 			return Result{}, fmt.Errorf("querying %s: %w", m.ID, err)
 		}
 		sev := Classify(value, ok, m.SeverityWatch, m.SeverityCritical)
-		severities = append(severities, sev)
 
 		pts, err := client.RangeQuery(query, start, now, step)
 		if err != nil {
@@ -125,20 +121,48 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 			Value: valPtr, Severity: sev, ThresholdLabel: m.ThresholdLabel,
 			Watch: m.SeverityWatch, Critical: m.SeverityCritical, Series: series,
 		})
+	}
 
-		if (sev == Watch || sev == Critical) && ok {
-			if tmpl, exists := m.Finding[string(sev)]; exists {
-				threshold := m.SeverityWatch
-				if sev == Critical {
-					threshold = m.SeverityCritical
-				}
-				findings = append(findings, Finding{
-					Severity: sev, Tag: m.Category, Title: m.Label,
-					Body: formatTemplate(tmpl, value, threshold),
-					Ref:  fmt.Sprintf("%s · %s", arr.ID, m.ID),
-				})
-			}
+	findings, health := BuildFindings(arr.ID, metrics, panels)
+	return Result{Panels: panels, Findings: findings, Health: health}, nil
+}
+
+// BuildFindings turns already-evaluated panels (severity + value already
+// computed, however that happened — a real VM query or synthetic mock data)
+// into the per-metric findings, the cross-panel correlation finding, and the
+// overall health. Factored out of EvaluateArray so the mock-data path
+// (internal/mockdata) produces findings with identical logic to real data,
+// not a separate reimplementation.
+func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) ([]Finding, Severity) {
+	metricByID := make(map[string]config.MetricDef, len(metrics))
+	for _, m := range metrics {
+		metricByID[m.ID] = m
+	}
+
+	var findings []Finding
+	var severities []Severity
+	for _, p := range panels {
+		severities = append(severities, p.Severity)
+		if p.Value == nil || (p.Severity != Watch && p.Severity != Critical) {
+			continue
 		}
+		m, ok := metricByID[p.ID]
+		if !ok {
+			continue
+		}
+		tmpl, exists := m.Finding[string(p.Severity)]
+		if !exists {
+			continue
+		}
+		threshold := m.SeverityWatch
+		if p.Severity == Critical {
+			threshold = m.SeverityCritical
+		}
+		findings = append(findings, Finding{
+			Severity: p.Severity, Tag: m.Category, Title: m.Label,
+			Body: formatTemplate(tmpl, *p.Value, threshold),
+			Ref:  fmt.Sprintf("%s · %s", arrayID, m.ID),
+		})
 	}
 
 	// Cross-panel correlation: front-end degraded while every back-end
@@ -170,7 +194,7 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 			Title:    "Bottleneck is likely upstream of the array",
 			Body: "Front-end metrics are degraded while every back-end signal this vendor publishes is within range. " +
 				"That points to the network/fabric path as the likely cause rather than the array's internal components.",
-			Ref: fmt.Sprintf("%s · derived from front-end + back-end panels", arr.ID),
+			Ref: fmt.Sprintf("%s · derived from front-end + back-end panels", arrayID),
 		}}, findings...)
 	}
 
@@ -185,7 +209,7 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 		}
 	}
 
-	return Result{Panels: panels, Findings: findings, Health: health}, nil
+	return findings, health
 }
 
 // Stats summarizes one metric's series over a report period — the basis

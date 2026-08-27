@@ -74,6 +74,9 @@ func SaveArrays(configDir string, arrays []Array) error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(arraysPath(configDir), b, 0o644)
 }
 
@@ -112,6 +115,40 @@ type thresholdsFile struct {
 // thresholdsFileName maps a vendor id to its YAML file under config/thresholds/.
 func thresholdsFileName(vendor string) string {
 	return vendor + ".yml"
+}
+
+// Settings holds small UI-toggleable app settings, persisted separately
+// from arrays.yml since they're operational preferences, not inventory.
+type Settings struct {
+	MockData bool `yaml:"mock_data"`
+}
+
+func settingsPath(configDir string) string { return filepath.Join(configDir, "settings.yml") }
+
+func LoadSettings(configDir string) (Settings, error) {
+	b, err := os.ReadFile(settingsPath(configDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Settings{}, nil
+		}
+		return Settings{}, err
+	}
+	var s Settings
+	if err := yaml.Unmarshal(b, &s); err != nil {
+		return Settings{}, fmt.Errorf("parsing settings.yml: %w", err)
+	}
+	return s, nil
+}
+
+func SaveSettings(configDir string, s Settings) error {
+	b, err := yaml.Marshal(s)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath(configDir), b, 0o644)
 }
 
 func LoadThresholds(configDir, vendor string) ([]MetricDef, error) {

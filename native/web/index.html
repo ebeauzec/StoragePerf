@@ -25,6 +25,7 @@
       <div class="nav-item tab" data-tab="config">Config</div>
     </div>
     <div class="topbar-right">
+      <div class="live-pill" id="mock-pill" style="display:none;"><span class="live-dot bad" style="background:var(--accent-be); box-shadow:0 0 0 3px rgba(124,143,239,0.18);"></span> Mock data</div>
       <div class="live-pill" id="updates-pill" style="display:none;"><span class="live-dot bad" style="background:var(--warn); box-shadow:0 0 0 3px rgba(240,170,58,0.15);"></span> <span id="updates-label"></span></div>
       <div class="live-pill"><span class="live-dot" id="live-dot"></span> <span id="live-label">Connecting…</span></div>
     </div>
@@ -78,11 +79,25 @@
 
   <div id="view-config" style="display:none;">
     <div class="section-head">
+      <div class="section-title">Demonstration</div>
+    </div>
+    <div class="toggle-row">
+      <div class="toggle-row-text">
+        <div class="toggle-title">Show mock data</div>
+        <div class="toggle-desc">Replaces the Fleet view with seven synthetic systems across all four vendors — for demos, screenshots, or trying Plumb before adding real arrays. No effect on your saved array inventory below.</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="mock-data-toggle">
+        <span class="track"><span class="thumb"></span></span>
+      </label>
+    </div>
+
+    <div class="section-head">
       <div class="section-title">Array Inventory</div>
       <div class="section-note">Edits write to config/arrays.yml and regenerate Prometheus scrape targets immediately</div>
     </div>
     <div id="config-rows"></div>
-    <div style="margin-top:14px; display:flex; gap:10px;">
+    <div style="margin-top:14px; display:flex; align-items:center; gap:10px;">
       <button class="btn" id="add-array">+ Add array</button>
       <button class="btn btn-primary" id="save-arrays">Save changes</button>
       <span id="config-status" class="section-note"></span>

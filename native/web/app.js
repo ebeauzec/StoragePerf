@@ -186,40 +186,54 @@ async function renderFleetView() {
 
 /* ---------------- config view ---------------- */
 function vendorSelectHtml(i, current) {
-  return `<select data-field="vendor" data-index="${i}" class="vendor-select">
+  return `<select data-field="vendor" data-index="${i}" class="config-vendor-select">
     ${Object.entries(VENDOR_LABELS).map(([v, label]) => `<option value="${v}" ${v === current ? "selected" : ""}>${label}</option>`).join("")}
   </select>`;
 }
 
-function configRowHtml(a, i) {
+function field(label, inputHtml, extraClass = "") {
+  return `<div class="config-field ${extraClass}"><span class="config-label">${label}</span>${inputHtml}</div>`;
+}
+function textField(label, dataField, value, placeholder = "", extraClass = "") {
+  return field(label, `<input data-field="${dataField}" placeholder="${placeholder}" value="${value || ""}">`, extraClass);
+}
+
+function configCardHtml(a, i) {
   const vendor = a.vendor || "pure_flasharray";
-  const pureFields = `
-    <div class="config-field"><span class="config-label">Host:port</span><input data-field="host" value="${a.host || ""}"></div>
-    <div class="config-field"><span class="config-label">Token env var</span><input data-field="token_env" placeholder="PURE_TOKEN_..." value="${a.token_env || ""}"></div>
-    <div class="config-field"><span class="config-label">Scheme</span>
-      <select data-field="scheme">
+  const pureFields =
+    textField("Host:port", "host", a.host) +
+    textField("Token env var", "token_env", a.token_env, "PURE_TOKEN_...") +
+    field(
+      "Scheme",
+      `<select data-field="scheme">
         <option value="https" ${a.scheme !== "http" ? "selected" : ""}>https</option>
         <option value="http" ${a.scheme === "http" ? "selected" : ""}>http</option>
-      </select>
-    </div>`;
-  const netappFields = `
-    <div class="config-field"><span class="config-label">Management LIF / Grid address</span><input data-field="management_lif" value="${a.management_lif || ""}"></div>
-    <div class="config-field"><span class="config-label">Username</span><input data-field="username" value="${a.username || ""}"></div>
-    <div class="config-field"><span class="config-label">Password env var</span><input data-field="password_env" placeholder="NETAPP_PASSWORD_..." value="${a.password_env || ""}"></div>
-    <div class="config-field"><span class="config-label">Datacenter</span><input data-field="datacenter" value="${a.datacenter || ""}"></div>`;
+      </select>`
+    );
+  const netappFields =
+    textField("Management LIF / Grid address", "management_lif", a.management_lif, "", "span-2") +
+    textField("Username", "username", a.username) +
+    textField("Password env var", "password_env", a.password_env, "NETAPP_PASSWORD_...") +
+    textField("Datacenter", "datacenter", a.datacenter);
 
-  return `<div class="config-row" data-index="${i}">
-    <div class="config-field"><span class="config-label">ID</span><input data-field="id" value="${a.id || ""}"></div>
-    <div class="config-field"><span class="config-label">Name</span><input data-field="name" value="${a.name || ""}"></div>
-    <div class="config-field"><span class="config-label">Model</span><input data-field="model" value="${a.model || ""}"></div>
-    <div class="config-field"><span class="config-label">Vendor</span>${vendorSelectHtml(i, vendor)}</div>
-    ${isNetApp(vendor) ? netappFields : pureFields}
-    <button class="btn btn-remove" data-remove="${i}">Remove</button>
+  return `<div class="config-card" data-index="${i}">
+    <div class="config-card-head">
+      <div class="config-card-id">
+        <input data-field="id" class="mono" placeholder="system-id" value="${a.id || ""}" style="background:transparent;border:none;color:var(--text);font-weight:600;font-size:13.5px;width:auto;min-width:80px;padding:0;">
+        ${vendorSelectHtml(i, vendor)}
+      </div>
+      <button class="btn btn-remove" data-remove="${i}">Remove</button>
+    </div>
+    <div class="config-grid">
+      ${textField("Display name", "name", a.name)}
+      ${textField("Model", "model", a.model)}
+      ${isNetApp(vendor) ? netappFields : pureFields}
+    </div>
   </div>`;
 }
 
 function readConfigRows() {
-  return Array.from(document.querySelectorAll(".config-row")).map((row) => {
+  return Array.from(document.querySelectorAll(".config-card")).map((row) => {
     const get = (f) => row.querySelector(`[data-field="${f}"]`)?.value.trim() || "";
     const vendor = get("vendor");
     const base = { id: get("id"), name: get("name"), model: get("model"), vendor };
@@ -231,16 +245,17 @@ function readConfigRows() {
 }
 
 function renderConfigRows() {
-  document.getElementById("config-rows").innerHTML = state.arraysConfig.map(configRowHtml).join("");
+  document.getElementById("config-rows").innerHTML =
+    state.arraysConfig.map(configCardHtml).join("") || '<div class="empty-note">No arrays configured yet — add one below, or turn on mock data above to explore the interface first.</div>';
   document.querySelectorAll("[data-remove]").forEach((btn) =>
     btn.addEventListener("click", () => {
       state.arraysConfig.splice(Number(btn.dataset.remove), 1);
       renderConfigRows();
     })
   );
-  document.querySelectorAll(".vendor-select").forEach((sel) =>
+  document.querySelectorAll(".config-vendor-select").forEach((sel) =>
     sel.addEventListener("change", () => {
-      // preserve whatever's currently in the row before switching field sets
+      // preserve whatever's currently in the card before switching field sets
       state.arraysConfig = readConfigRows();
       state.arraysConfig[Number(sel.dataset.index)].vendor = sel.value;
       renderConfigRows();
@@ -249,11 +264,29 @@ function renderConfigRows() {
 }
 
 async function loadConfigView() {
-  const data = await api("/api/config/arrays");
-  state.arraysConfig = data.arrays;
+  const [arraysData, settings] = await Promise.all([api("/api/config/arrays"), api("/api/config/settings")]);
+  state.arraysConfig = arraysData.arrays || [];
   renderConfigRows();
+  document.getElementById("mock-data-toggle").checked = !!settings.mock_data;
   await renderUpdatesRows();
 }
+
+document.getElementById("mock-data-toggle").addEventListener("change", async (e) => {
+  const enabled = e.target.checked;
+  try {
+    await api("/api/config/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mock_data: enabled }),
+    });
+  } catch (err) {
+    e.target.checked = !enabled; // revert on failure
+    return;
+  }
+  document.getElementById("mock-pill").style.display = enabled ? "flex" : "none";
+  state.selectedId = null;
+  await tick();
+});
 
 /* ---------------- updates (check-and-notify) ---------------- */
 function updateRowHtml(u) {
@@ -339,7 +372,17 @@ async function tick() {
   }
 }
 
+async function syncMockPill() {
+  try {
+    const settings = await api("/api/config/settings");
+    document.getElementById("mock-pill").style.display = settings.mock_data ? "flex" : "none";
+  } catch (e) {
+    /* non-fatal — pill just stays hidden until the Config tab is opened */
+  }
+}
+
 tick();
+syncMockPill();
 renderUpdatesRows();
 setInterval(tick, 15000);
 setInterval(renderUpdatesRows, 5 * 60 * 1000);

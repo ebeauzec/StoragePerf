@@ -177,6 +177,9 @@ func main() {
 		Frontend:                 webFS(),
 		RegenerateHarvestPollers: hs.apply,
 	}
+	if err := app.LoadSettings(); err != nil {
+		log.Fatalf("loading settings: %v", err)
+	}
 	if err := app.InitialRegenerate(); err != nil {
 		log.Fatalf("generating initial scrape config: %v", err)
 	}

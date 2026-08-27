@@ -192,16 +192,12 @@ matrix, is in [native/README.md](native/README.md).
 
 ### Try it with demo data first
 
-Seven synthetic systems across all four vendors, no real hardware required:
-
-```bash
-cd native
-./scripts/run-demo.sh    # starts the demo fleet, points config/arrays.yml at it
-# in another terminal:
-./plumb                  # or go run ./cmd/plumb during development
-```
-
-See [Multi-Vendor Support & Demo Mode](#9-multi-vendor-support--demo-mode).
+Start `./plumb`, open the **Config** tab, and switch on **Show mock data** —
+seven synthetic systems across all four vendors appear immediately, no real
+hardware and nothing else to run. Switch it off to return to your real
+inventory. See [Multi-Vendor Support & Demo Mode](#9-multi-vendor-support--demo-mode)
+for the alternative (`run-demo.sh`) that exercises the real collection
+pipeline instead of generating data in-process.
 
 ### Docker build (alternative — Pure Storage only)
 
@@ -320,19 +316,32 @@ On other platforms, NetApp entries in `arrays.yml` are accepted but simply
 won't collect data — Plumb logs why and keeps running everything else
 normally.
 
-**Demo mode** (`native/scripts/run-demo.sh`) launches seven synthetic
-systems spanning all four vendors — one of each severity level — and points
-`config/arrays.yml` at them, so the full multi-vendor interface,
-correlation finding, reports, and export all have real (synthetic) data to
-show immediately. The synthetic exporter
-([demo-exporter/exporter.py](demo-exporter/exporter.py)) emits exactly the
-metric names each vendor's threshold file queries — see that file's own
-docstring for exactly what it does and doesn't model. NetApp demo entries
-use a direct `host` field rather than the bundled Harvest poller, since the
-demo exporters aren't real ONTAP/StorageGRID systems for Harvest to
-authenticate against — this is also a legitimate way to point Plumb at a
-Harvest/StorageGRID Prometheus endpoint you already run yourself, not just
-a demo trick (see `internal/targets`).
+**Demo mode has two forms:**
+
+- **The "Show mock data" toggle** (Config tab) — the simplest option.
+  Generates seven synthetic systems across all four vendors entirely
+  in-process (`internal/mockdata`), with no separate exporters, no real
+  arrays required, and no effect on your saved inventory — flip it off and
+  your real `arrays.yml` is exactly as you left it. This is what to use for
+  a demo, a screenshot, or just trying the interface before you have real
+  systems to point at.
+- **`native/scripts/run-demo.sh`** — for testing the *real* collection
+  pipeline (Prometheus scraping, the scrape proxy, Harvest) end to end
+  against synthetic data instead of a live array. It launches seven
+  instances of [demo-exporter/exporter.py](demo-exporter/exporter.py) (real
+  Python processes emitting real Prometheus text) and points
+  `config/arrays.yml` at them. Use this when you're validating Plumb's
+  plumbing itself, not just its UI.
+
+Both use the same seven-system, four-vendor fleet, one of each severity
+level, so the flagship "bottleneck is likely upstream" correlation finding
+(see [Performance Analysis §7](docs/PERFORMANCE-ANALYSIS.md#7-the-correlation-finding--how-plumb-decides-upstream-vs-internal))
+fires on the critical-profile systems in both. NetApp entries in
+`run-demo.sh`'s fleet use a direct `host` field rather than the bundled
+Harvest poller, since the demo exporters aren't real ONTAP/StorageGRID
+systems for Harvest to authenticate against — this is also a legitimate way
+to point Plumb at a Harvest/StorageGRID Prometheus endpoint you already run
+yourself, not just a demo trick (see `internal/targets`).
 
 ---
 
@@ -389,6 +398,7 @@ StoragePerf/
 │   ├── internal/
 │   │   ├── config/              ← arrays.yml + thresholds/*.yml loading
 │   │   ├── rules/                ← threshold evaluation, findings, correlation logic
+│   │   ├── mockdata/              ← in-process synthetic fleet for the Config tab's mock-data toggle
 │   │   ├── report/                ← array/fleet report generation (html/template)
 │   │   ├── export/                 ← CSV export
 │   │   ├── harvest/                 ← Harvest poller config generation
