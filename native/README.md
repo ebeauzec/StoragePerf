@@ -59,6 +59,21 @@ Requires Go 1.22+.
 versions in that script (and in `internal/updates/updates.go`, which tracks
 the same numbers for the check-and-notify feature).
 
+## Versioning
+
+Plumb's own version — as opposed to the pinned third-party sidecar versions
+above — is Semantic Versioning (`MAJOR.MINOR.PATCH`), sourced from the single
+`VERSION` file at the repository root. `build-native.sh` reads it to name
+the distributable archives and to bake it into the binary
+(`-ldflags -X main.version=...`), which is what the UI's version tag (top
+left) and `GET /api/version` report at runtime. Each release is tagged
+`vX.Y.Z` and published as a GitHub Release at
+[github.com/ebeauzec/StoragePerf/releases](https://github.com/ebeauzec/StoragePerf/releases)
+— the version badge on the main README tracks that automatically.
+
+To cut a new version: bump `VERSION`, commit, tag (`git tag vX.Y.Z`), push
+the tag, and create the matching GitHub Release.
+
 ## What I could actually verify
 
 Built and tested end-to-end (real Prometheus/VictoriaMetrics binaries, real

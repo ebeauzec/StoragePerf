@@ -50,6 +50,7 @@ a{color:inherit;}
 .brand-mark svg{width:15px;height:15px;}
 .brand-name{font-family:"Archivo"; font-weight:800; font-size:17px; letter-spacing:0.01em;}
 .brand-sub{color:var(--text-dim); font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase; margin-left:4px; padding-left:12px; border-left:1px solid var(--border);}
+.version-tag{color:var(--text-dim); font-size:11px; margin-left:2px;}
 
 .nav{display:flex; gap:2px;}
 .nav-item{ padding:7px 13px; border-radius:7px; font-size:13px; font-weight:500; color:var(--text-muted); cursor:pointer; }

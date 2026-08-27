@@ -12,7 +12,7 @@ DIST=dist
 rm -rf "$DIST"
 mkdir -p "$DIST"
 
-VERSION=$(date +%Y.%m.%d)
+VERSION=$(cat ../VERSION)
 
 # os:arch:exe-suffix:archive-ext
 TARGETS=(

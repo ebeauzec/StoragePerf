@@ -178,12 +178,17 @@ async function renderFleetView() {
     return;
   }
 
-  const fe = detail.panels.filter((p) => p.category === "frontend");
-  const be = detail.panels.filter((p) => p.category === "backend");
+  // defensive: treat a missing/null panels or findings array the same as an
+  // empty one rather than throwing — the backend should always send "[]",
+  // never "null", but this keeps the UI alive even if that ever regresses
+  const panels = detail.panels || [];
+  const findings = detail.findings || [];
+  const fe = panels.filter((p) => p.category === "frontend");
+  const be = panels.filter((p) => p.category === "backend");
   document.getElementById("fe-panels").innerHTML = fe.map(panelHtml).join("") || '<div class="empty-note">No front-end metrics configured.</div>';
   document.getElementById("be-panels").innerHTML = be.map(panelHtml).join("") || '<div class="empty-note">No back-end metrics configured.</div>';
   document.getElementById("findings").innerHTML =
-    detail.findings.length ? detail.findings.map(findingHtml).join("") : '<div class="empty-note">No best-practice findings for this array in the current window — everything is inside range.</div>';
+    findings.length ? findings.map(findingHtml).join("") : '<div class="empty-note">No best-practice findings for this array in the current window — everything is inside range.</div>';
 }
 
 /* ---------------- config view ---------------- */
@@ -383,8 +388,18 @@ async function syncMockPill() {
   }
 }
 
+async function loadVersion() {
+  try {
+    const v = await api("/api/version");
+    if (v.version) document.getElementById("version-tag").textContent = `v${v.version}`;
+  } catch (e) {
+    /* non-fatal — version tag just stays blank */
+  }
+}
+
 tick();
 syncMockPill();
+loadVersion();
 renderUpdatesRows();
 setInterval(tick, 15000);
 setInterval(renderUpdatesRows, 5 * 60 * 1000);

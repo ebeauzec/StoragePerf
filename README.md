@@ -1,6 +1,6 @@
 # Plumb — Storage Performance Console
 
-[![Version](https://img.shields.io/badge/version-2026.08.27-0066cc)](native/dist)
+[![Version](https://img.shields.io/github/v/release/ebeauzec/StoragePerf?color=0066cc&label=version)](https://github.com/ebeauzec/StoragePerf/releases)
 [![License](https://img.shields.io/badge/license-Proprietary-red)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?logo=go&logoColor=white)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)]()

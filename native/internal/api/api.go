@@ -27,6 +27,7 @@ import (
 )
 
 type App struct {
+	Version                  string // set via -ldflags at build time — see cmd/plumb/main.go
 	ConfigDir                string
 	TargetsPath              string
 	HarvestPath              string
@@ -132,7 +133,10 @@ type fleetEntry struct {
 }
 
 func toFleetEntry(id, name, model, vendor string, res rules.Result) fleetEntry {
-	entry := fleetEntry{ID: id, Name: name, Model: model, Vendor: vendor, Health: res.Health}
+	// Sparkline defaults non-nil ([]T{} rather than the zero-value nil) so a
+	// vendor whose panels don't match isLatencyPanel still serializes as
+	// JSON "[]", not "null" — the same class of bug as rules.Panel.Series.
+	entry := fleetEntry{ID: id, Name: name, Model: model, Vendor: vendor, Health: res.Health, Sparkline: [][2]float64{}}
 	for _, p := range res.Panels {
 		if isLatencyPanel(p.ID) {
 			entry.Latency = p.Value
@@ -152,7 +156,7 @@ func (a *App) handleFleet(w http.ResponseWriter, r *http.Request) {
 		for _, arr := range mockdata.Fleet {
 			metrics, err := a.thresholdsFor(arr.Vendor)
 			if err != nil {
-				out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown})
+				out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown, Sparkline: [][2]float64{}})
 				continue
 			}
 			res := mockdata.EvaluateArray(arr, metrics, time.Hour)
@@ -170,12 +174,12 @@ func (a *App) handleFleet(w http.ResponseWriter, r *http.Request) {
 	for _, arr := range arrays {
 		metrics, err := a.thresholdsFor(arr.Vendor)
 		if err != nil {
-			out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown})
+			out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown, Sparkline: [][2]float64{}})
 			continue
 		}
 		res, err := rules.EvaluateArray(a.VM, arr, metrics, time.Hour)
 		if err != nil {
-			out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown})
+			out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown, Sparkline: [][2]float64{}})
 			continue
 		}
 		out = append(out, toFleetEntry(arr.ID, arr.Name, arr.Model, arr.Vendor, res))
@@ -269,6 +273,10 @@ func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"mock_data": payload.MockData})
+}
+
+func (a *App) handleVersion(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{"version": a.Version})
 }
 
 func (a *App) handleUpdates(w http.ResponseWriter, r *http.Request) {
@@ -448,6 +456,7 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("PUT /api/config/arrays", a.handlePutArraysConfig)
 	mux.HandleFunc("GET /api/config/settings", a.handleGetSettings)
 	mux.HandleFunc("PUT /api/config/settings", a.handlePutSettings)
+	mux.HandleFunc("GET /api/version", a.handleVersion)
 	mux.HandleFunc("GET /api/updates", a.handleUpdates)
 	mux.HandleFunc("GET /api/export/{id}", a.handleExport)
 	mux.HandleFunc("GET /api/reports/array/{id}", a.handleArrayReport)

@@ -110,7 +110,10 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 		step = 15 * time.Second
 	}
 
-	var panels []Panel
+	// initialized non-nil, not just declared, so an array with zero metrics
+	// (shouldn't happen, but not impossible) serializes as JSON "[]" rather
+	// than "null" — a nil slice crashes the frontend's array.length checks
+	panels := []Panel{}
 	for _, m := range metrics {
 		query := substitute(m.Query, arr.ID)
 
@@ -158,7 +161,10 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 		metricByID[m.ID] = m
 	}
 
-	var findings []Finding
+	// non-nil for the same reason as panels above — a fully healthy array
+	// has zero findings, and a nil slice would serialize as JSON "null"
+	// instead of "[]", crashing the frontend's findings.length check
+	findings := []Finding{}
 	var severities []Severity
 	for _, p := range panels {
 		severities = append(severities, p.Severity)

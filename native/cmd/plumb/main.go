@@ -168,6 +168,7 @@ func main() {
 	updateChecker := updates.NewChecker(os.Getenv("PLUMB_CHECK_FOR_UPDATES") != "false")
 
 	app := &api.App{
+		Version:                  version,
 		ConfigDir:                layout.Config,
 		TargetsPath:              targetsPath,
 		HarvestPath:              harvestCfgPath,

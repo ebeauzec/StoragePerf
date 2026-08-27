@@ -137,12 +137,12 @@ func EvaluateArray(arr Array, metrics []config.MetricDef, window time.Duration) 
 		step = 15 * time.Second
 	}
 
-	var panels []rules.Panel
+	panels := []rules.Panel{} // non-nil — see rules.EvaluateArray's identical comment
 	for _, m := range metrics {
 		series := GenerateSeries(arr.ID+"|"+m.ID, arr.Profile, m.Category, m.SeverityWatch, m.SeverityCritical, start, now, step)
 
 		var valPtr *float64
-		var pairs [][2]float64
+		pairs := [][2]float64{}
 		sev := rules.Unknown
 		if len(series) > 0 {
 			v := series[len(series)-1].Value
