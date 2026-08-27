@@ -1,0 +1,31 @@
+# Live config — see arrays.example.yml for field documentation.
+#
+# Ships pointed at the three bundled demo exporters so the stack is live and
+# demonstrable with zero setup. Replace these entries with your real arrays
+# (copy the pattern from arrays.example.yml) when you're ready to point it
+# at actual hardware — nothing else in the stack needs to change.
+
+arrays:
+  - id: fa-prod-east-01
+    name: fa-prod-east-01
+    model: FA-X90R2
+    host: demo-array-1:9491
+    scheme: http
+    metrics_path: /metrics
+    verify_tls: false
+
+  - id: fa-prod-west-02
+    name: fa-prod-west-02
+    model: FA-X70R3
+    host: demo-array-2:9491
+    scheme: http
+    metrics_path: /metrics
+    verify_tls: false
+
+  - id: fa-erp-cluster
+    name: fa-erp-cluster
+    model: FA-X70R3
+    host: demo-array-3:9491
+    scheme: http
+    metrics_path: /metrics
+    verify_tls: false

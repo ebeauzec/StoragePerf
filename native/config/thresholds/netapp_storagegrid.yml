@@ -1,0 +1,95 @@
+# Plumb — NetApp StorageGRID best-practice thresholds
+#
+# Collected via NetApp Harvest's StorageGrid collector — same mechanism as
+# the ONTAP path (an authenticated Harvest poller exposing a plain local
+# Prometheus endpoint), pointed at the Grid Management API instead of an
+# ONTAP cluster. StorageGRID also runs its own internal Prometheus on its
+# Admin Nodes if you'd rather federate from that directly instead of Harvest
+# — either way the metric names below are the same, since they come from
+# StorageGRID itself.
+#
+# Metric names are verified against NetApp's own published documentation
+# ("Commonly used Prometheus metrics", docs.netapp.com/us-en/storagegrid)
+# as of August 2026 — these are official, not reverse-engineered.
+#
+# As with the other vendor files, the severity_watch / severity_critical
+# numbers are illustrative starting points, not published StorageGRID SLAs.
+
+metrics:
+  - id: metadata_query_latency
+    category: frontend
+    label: "Metadata Query Latency"
+    unit: ms
+    query: 'avg(storagegrid_metadata_queries_average_latency_milliseconds{array="{array}"})'
+    comparison: gt
+    severity_watch: 50
+    severity_critical: 150
+    threshold_label: "< 50 ms (illustrative)"
+    finding:
+      watch: "Metadata query latency is averaging {value:.0f}ms, above the 50ms illustrative guidance — client-facing S3/Swift requests will feel this."
+      critical: "Metadata query latency is averaging {value:.0f}ms — this directly slows every object operation on this node."
+
+  - id: s3_error_rate
+    category: frontend
+    label: "S3 Operation Failure Rate"
+    unit: "failures/min"
+    query: 'sum(rate(storagegrid_s3_operations_failed{array="{array}"}[5m])) * 60'
+    comparison: gt
+    severity_watch: 5
+    severity_critical: 30
+    threshold_label: "< 5 / min (illustrative)"
+    finding:
+      watch: "S3 operations are failing at {value:.0f}/min — check client error codes (4xx vs 5xx) to narrow down auth vs. server-side causes."
+      critical: "S3 operations are failing at {value:.0f}/min — this is client-visible and worth immediate attention."
+
+  - id: network_errors
+    category: frontend
+    label: "Network Interface Errors"
+    unit: "errors/min"
+    query: 'sum(rate(node_network_receive_errs_total{array="{array}"}[5m]) + rate(node_network_transmit_errs_total{array="{array}"}[5m])) * 60'
+    comparison: gt
+    severity_watch: 5
+    severity_critical: 15
+    threshold_label: "< 5 / min (illustrative)"
+    finding:
+      watch: "Network interface error rate is {value:.1f}/min — worth checking cabling/NIC health on this node."
+      critical: "Network interface error rate is {value:.1f}/min — a marginal link is a plausible cause of client-visible slowness."
+
+  - id: node_cpu
+    category: backend
+    label: "Node CPU Utilization"
+    unit: "%"
+    query: 'avg(storagegrid_node_cpu_utilization_percentage{array="{array}"})'
+    comparison: gt
+    severity_watch: 70
+    severity_critical: 85
+    threshold_label: "< 70% sustained (illustrative)"
+    finding:
+      watch: "Node CPU utilization is averaging {value:.0f}%, above the 70% sustained guidance."
+      critical: "Node CPU utilization is averaging {value:.0f}% — the node itself is now a contributing factor to any client-facing slowness."
+
+  - id: ilm_backlog
+    category: backend
+    label: "ILM Evaluation Backlog"
+    unit: objects
+    query: 'sum(storagegrid_ilm_awaiting_total_objects{array="{array}"})'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 1000000
+    threshold_label: "< 100,000 objects (illustrative)"
+    finding:
+      watch: "{value:.0f} objects are awaiting ILM evaluation — a growing backlog here is an early signal of a node falling behind, before it shows up as client latency."
+      critical: "{value:.0f} objects are awaiting ILM evaluation — this node is materially behind on lifecycle management, which risks both performance and policy compliance (replication/erasure-coding placement)."
+
+  - id: storage_capacity
+    category: backend
+    label: "Storage Capacity Used"
+    unit: "%"
+    query: '100 * (1 - (storagegrid_storage_utilization_usable_space_bytes{array="{array}"} / storagegrid_storage_utilization_total_space_bytes{array="{array}"}))'
+    comparison: gt
+    severity_watch: 80
+    severity_critical: 90
+    threshold_label: "< 80% (illustrative)"
+    finding:
+      watch: "Storage capacity is at {value:.0f}% used, above the 80% guidance."
+      critical: "Storage capacity is at {value:.0f}% used — new object ingest is at risk on this node, not just performance."

@@ -1,0 +1,46 @@
+# Plumb — array inventory
+#
+# One entry per Pure Storage array. Copy this file to arrays.yml and edit
+# arrays.yml (arrays.yml is the file the app actually reads — this .example
+# file is just reference and is never loaded).
+#
+# host          management FQDN or IP of the array, with port if non-default.
+#               FlashArray and FlashBlade both serve native OpenMetrics on
+#               HTTPS 443 at /metrics from Purity//FA 6.4.2+ and Purity//FB
+#               equivalents. If your array predates that, run the community
+#               pure-fa-openmetrics-exporter alongside it instead and point
+#               `host` at that exporter.
+# token_env     name of an environment variable holding a Pure API token
+#               (FlashArray: Settings > Access > API Tokens, or
+#               `pureadmin create --api-token <user>`; grant it a read-only /
+#               monitor role — Plumb only ever calls GET /metrics).
+#               Set the actual token as a real environment variable before
+#               starting the stack, e.g. in a local .env file — never commit
+#               a token into this file.
+# verify_tls    set true once the array's certificate (or your internal CA)
+#               is trusted by the plumb-api container. Leave false only
+#               while first testing against a self-signed cert.
+#
+# After editing this file, either restart plumb-api or call
+# `PUT /api/config/arrays` (the Config tab in the UI does this for you) —
+# it rewrites the Prometheus scrape targets immediately, no Prometheus
+# restart required.
+
+arrays:
+  - id: fa-prod-east-01
+    name: fa-prod-east-01
+    model: FA-X90R2
+    host: fa-prod-east-01.mgmt.example.internal
+    scheme: https
+    metrics_path: /metrics
+    token_env: PURE_TOKEN_FA_PROD_EAST_01
+    verify_tls: true
+
+  - id: fb-media-01
+    name: fb-media-01
+    model: FlashBlade//S
+    host: fb-media-01.mgmt.example.internal
+    scheme: https
+    metrics_path: /metrics
+    token_env: PURE_TOKEN_FB_MEDIA_01
+    verify_tls: true

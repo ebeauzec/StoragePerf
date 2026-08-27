@@ -1,0 +1,70 @@
+# Plumb — demo fleet, for demonstration purposes only
+#
+# Seven synthetic systems spanning all four supported vendors, wired to the
+# demo exporters that ../../demo-exporter/exporter.py runs (see
+# native/scripts/run-demo.sh, which starts all of them and points you at
+# this file). Not real hardware, not real data — see the module docstring
+# in exporter.py for exactly what it does and doesn't model.
+#
+# NetApp entries here use `host` directly (bypassing the bundled Harvest
+# poller) since the demo exporters aren't real ONTAP/StorageGRID systems for
+# Harvest to authenticate against — see internal/targets' comment for why
+# that's a real, supported mode and not just a demo trick.
+
+arrays:
+  - id: fa-prod-east-01
+    name: fa-prod-east-01
+    model: FA-X90R2
+    vendor: pure_flasharray
+    host: 127.0.0.1:9491
+    scheme: http
+    metrics_path: /metrics
+    verify_tls: false
+
+  - id: fa-prod-west-02
+    name: fa-prod-west-02
+    model: FA-X70R3
+    vendor: pure_flasharray
+    host: 127.0.0.1:9492
+    scheme: http
+    metrics_path: /metrics
+    verify_tls: false
+
+  - id: fa-erp-cluster
+    name: fa-erp-cluster
+    model: FA-X70R3
+    vendor: pure_flasharray
+    host: 127.0.0.1:9493
+    scheme: http
+    metrics_path: /metrics
+    verify_tls: false
+
+  - id: fb-media-01
+    name: fb-media-01
+    model: "FlashBlade//S"
+    vendor: pure_flashblade
+    host: 127.0.0.1:9494
+    scheme: http
+    metrics_path: /metrics
+    verify_tls: false
+
+  - id: ontap-cluster-01
+    name: ontap-cluster-01
+    model: "AFF A400"
+    vendor: netapp_ontap
+    host: 127.0.0.1:9495
+    datacenter: DC-01
+
+  - id: ontap-cluster-02
+    name: ontap-cluster-02
+    model: "AFF A250"
+    vendor: netapp_ontap
+    host: 127.0.0.1:9496
+    datacenter: DC-01
+
+  - id: sg-grid-01
+    name: sg-grid-01
+    model: "StorageGRID"
+    vendor: netapp_storagegrid
+    host: 127.0.0.1:9497
+    datacenter: DC-01

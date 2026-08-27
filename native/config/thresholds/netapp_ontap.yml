@@ -1,0 +1,117 @@
+# Plumb — NetApp ONTAP best-practice thresholds
+#
+# Collected via NetApp's own official Harvest poller (github.com/NetApp/harvest),
+# not a custom scraper — Harvest does the authenticated REST/RestPerf
+# collection against the cluster and exposes a plain local Prometheus
+# endpoint that Plumb's bundled Prometheus scrapes directly.
+#
+# Metric names below (volume_avg_latency, node_cpu_busy, aggr_disk_busy,
+# snapmirror_lag_time, nic_util_percent, nic_rx_crc_errors,
+# aggr_space_used_percent) are verified against Harvest's own published
+# Grafana dashboards (github.com/NetApp/harvest/grafana/dashboards/cmode/)
+# as of August 2026. Harvest's exact label set can still vary by version —
+# if a panel shows no data, run:
+#
+#   curl http://127.0.0.1:<poller-port>/metrics | grep <metric_name>
+#
+# against the running poller (see data/generated/harvest.yml for assigned
+# ports) and adjust the query here.
+#
+# NetApp's own documentation is explicit that latency thresholds are
+# workload-dependent, not universal (their own KB example: a warning at
+# 12ms / critical at 15ms for one Exchange workload that crashes past 20ms).
+# The numbers below are illustrative starting points for that same reason —
+# tune severity_watch / severity_critical to what's normal for each
+# workload, not the other way around.
+
+metrics:
+  - id: volume_avg_latency
+    category: frontend
+    label: "Volume Latency (avg)"
+    unit: ms
+    query: 'avg(volume_avg_latency{array="{array}"})'
+    comparison: gt
+    severity_watch: 8
+    severity_critical: 15
+    threshold_label: "< 8 ms (illustrative — workload dependent)"
+    finding:
+      watch: "Average volume latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance."
+      critical: "Average volume latency is {value:.1f}ms — NetApp's own guidance treats sustained latency in this range as workload-impacting for most applications."
+
+  - id: nic_utilization
+    category: frontend
+    label: "NIC Utilization (max port)"
+    unit: "%"
+    query: 'max(nic_util_percent{array="{array}"})'
+    comparison: gt
+    severity_watch: 75
+    severity_critical: 90
+    threshold_label: "< 75% (illustrative)"
+    finding:
+      watch: "A network port is at {value:.0f}% utilization, above the 75% guidance that preserves headroom for failover."
+      critical: "A network port is at {value:.0f}% utilization — a failover event would likely saturate the remaining path."
+
+  - id: nic_errors
+    category: frontend
+    label: "NIC CRC / Receive Errors"
+    unit: "errors/min"
+    query: 'sum(rate(nic_rx_crc_errors{array="{array}"}[5m])) * 60'
+    comparison: gt
+    severity_watch: 5
+    severity_critical: 15
+    threshold_label: "< 5 / min (illustrative)"
+    finding:
+      watch: "NIC CRC error rate is {value:.1f}/min, above the 5/min reference — check the cable/SFP."
+      critical: "NIC CRC error rate is {value:.1f}/min — points to a marginal link, not cluster load."
+
+  - id: node_cpu_busy
+    category: backend
+    label: "Node CPU Busy"
+    unit: "%"
+    query: 'avg(node_cpu_busy{array="{array}"})'
+    comparison: gt
+    severity_watch: 70
+    severity_critical: 85
+    threshold_label: "< 70% sustained (illustrative)"
+    finding:
+      watch: "Node CPU busy is averaging {value:.0f}%, above the 70% sustained guidance."
+      critical: "Node CPU busy is averaging {value:.0f}% — the controller itself is now a contributing factor, not just the path to it."
+
+  - id: aggr_disk_busy
+    category: backend
+    label: "Aggregate Disk Busy"
+    unit: "%"
+    query: 'avg(aggr_disk_busy{array="{array}"})'
+    comparison: gt
+    severity_watch: 70
+    severity_critical: 85
+    threshold_label: "< 70% sustained (illustrative)"
+    finding:
+      watch: "Aggregate disk busy is averaging {value:.0f}%, above the 70% guidance."
+      critical: "Aggregate disk busy is averaging {value:.0f}% — the backing disks are the likely bottleneck, not the network path."
+
+  - id: snapmirror_lag
+    category: backend
+    label: "SnapMirror Lag"
+    unit: sec
+    query: 'max(snapmirror_lag_time{array="{array}"})'
+    comparison: gt
+    severity_watch: 90
+    severity_critical: 180
+    threshold_label: "< 90 sec (illustrative)"
+    finding:
+      watch: "SnapMirror lag is {value:.0f}s, above the 90s target."
+      critical: "SnapMirror lag is {value:.0f}s — recovery point objective is at risk if this persists."
+
+  - id: aggr_capacity
+    category: backend
+    label: "Aggregate Capacity Used"
+    unit: "%"
+    query: 'avg(aggr_space_used_percent{array="{array}"})'
+    comparison: gt
+    severity_watch: 80
+    severity_critical: 90
+    threshold_label: "< 80% (illustrative)"
+    finding:
+      watch: "Aggregate capacity is at {value:.0f}%, above the 80% guidance — reduction efficiency or growth should be reviewed."
+      critical: "Aggregate capacity is at {value:.0f}% — ONTAP's own performance degrades as aggregates approach full, on top of the capacity risk."

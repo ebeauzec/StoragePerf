@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Prometheus keeps only a short local buffer — VictoriaMetrics (via
+# remote_write) is the actual long-term store, configured for effectively
+# unlimited retention in docker-compose.yml.
+remote_write:
+  - url: http://victoriametrics:8428/api/v1/write
+
+scrape_configs:
+  - job_name: pure-arrays
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.json
+        refresh_interval: 30s

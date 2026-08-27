@@ -1,0 +1,224 @@
+Plumb (StoragePerf)
+Proprietary Software License
+
+Copyright (c) 2026 Obi1 - FZCO. All Rights Reserved.
+
+================================================================================
+OWNERSHIP, INTELLECTUAL PROPERTY RIGHTS AND INDEPENDENT DEVELOPMENT
+================================================================================
+
+This software application, including without limitation its source code, object
+code, documentation, technical specifications, architecture, designs, workflows,
+configurations, prompts, scripts, build materials, databases, user interfaces,
+and all related materials, content and developments, whether existing now or
+created in the future, is the sole and exclusive intellectual property of
+Obi1 - FZCO ("Author"), EXCEPT for the third-party open-source components
+identified in THIRD_PARTY_NOTICES.md, which remain the property of their
+respective copyright holders under their own licenses as described there.
+
+All rights, title and interest in and to the software, including all copyright,
+economic rights, moral rights to the extent applicable, neighbouring rights,
+database rights, know-how, trade secrets, inventions, improvements, derivative
+works, updates, enhancements and all other intellectual property rights, are and
+shall remain exclusively vested in Obi1 - FZCO, unless expressly transferred
+by it under a separate written agreement signed by it.
+
+The software was independently conceived, authored, developed, tested and
+assembled by Obi1 - FZCO on its own time and using independent tools,
+resources and development environments. The software was not created as a
+work-for-hire, commissioned work, employment deliverable, client assignment,
+internal project, sponsored project, or contractual obligation for any employer,
+former employer, client, sponsor, platform provider, user, contributor or third
+party.
+
+No employer, former employer, client, sponsor, platform provider, user,
+contributor or third party shall acquire any ownership interest, licence,
+royalty, profit-share, assignment right, benefit, claim, control, or other right
+in or to the software by reason of Obi1 - FZCO's past or present engagements,
+sponsorship, administrative status, professional relationship, access to the
+software, use of the software, feedback, contribution, or use of independent
+development tools.
+
+The software does not contain, incorporate, derive from, or rely upon any
+confidential information, proprietary material, customer data, trade secrets,
+private repositories, internal systems, credentials, unpublished documentation,
+business plans, source code, technical materials, employer-provided resources, or
+non-public information belonging to any employer, former employer, client,
+sponsor, platform provider, user, contributor or third party. Every metric name,
+API field, and collection mechanism this software interoperates with (Pure
+Storage's and NetApp's published OpenMetrics/Prometheus interfaces) is drawn
+solely from those vendors' own public documentation and public open-source
+exporter projects, as detailed in THIRD_PARTY_NOTICES.md.
+
+Any use of third-party tools, including generative-AI assisted development
+tools, was carried out solely as an independent development aid under Obi1 -
+FZCO's direction, review, testing, selection and control. No confidential,
+proprietary, customer, internal, employer-owned, client-owned, or trade-secret
+information of any employer, former employer, client, sponsor, platform provider,
+user, contributor or third party was submitted to, uploaded into, disclosed to,
+or used with such tools in connection with the development of the software.
+
+If any third-party proprietary material is credibly identified as having been
+inadvertently included in the software, Obi1 - FZCO reserves the right to
+remove, replace or remediate such material promptly, without admission of
+liability and without prejudice to its ownership of the remaining software.
+
+Any references to third-party products, services, companies, platforms,
+trademarks, technologies or tools — including Pure Storage®, FlashArray®,
+FlashBlade®, NetApp®, ONTAP®, StorageGRID®, and Harvest — are made solely for
+identification, compatibility, interoperability, technical, or documentation
+purposes. Such references do not imply any affiliation, sponsorship,
+endorsement, approval, authorisation, partnership, licence, or commercial
+relationship with the relevant third-party owner. All third-party trademarks,
+product names, company names and service names remain the property of their
+respective owners.
+
+================================================================================
+THIRD-PARTY OPEN-SOURCE COMPONENTS
+================================================================================
+
+This software bundles and depends on certain third-party open-source software
+components, each under its own license (predominantly Apache License 2.0 and
+MIT). Those components are NOT covered by the proprietary terms below — they
+remain licensed exclusively under their own original license terms, which this
+software's distribution preserves and reproduces in full. See
+THIRD_PARTY_NOTICES.md for the complete list of components, their copyright
+holders, their licenses, and the location of the full license text for each
+(reproduced under LICENSES/). Nothing in this License restricts your rights
+under those components' own licenses.
+
+================================================================================
+GRANT OF LICENSE (FOR OBI1 - FZCO'S ORIGINAL CODE ONLY)
+================================================================================
+
+Subject to the terms and conditions of this License, the Author grants you a
+limited, non-exclusive, non-transferable, revocable license to use this
+Software as follows:
+
+1. NON-COMMERCIAL USE (FREE)
+   You may use, copy, and run this Software, without modification, for personal,
+   educational, research, or other non-commercial purposes at no charge, provided
+   that:
+   (a) This License file, THIRD_PARTY_NOTICES.md, and all copyright notices are
+       retained in all copies or substantial portions of the Software; and
+   (b) You do not use the Software in any manner that generates revenue,
+       reduces costs in a commercial context, or forms part of a product or
+       service offered to paying customers.
+
+2. COMMERCIAL USE (REQUIRES PRIOR WRITTEN CONSENT)
+   Any use of the Software — in whole or in part, directly or as part of a
+   derivative work — in a commercial context requires the Author's prior
+   explicit written consent. Commercial use includes, without limitation:
+   (a) Using the Software as part of a product or service sold or licensed to
+       third parties;
+   (b) Using the Software internally within an organisation to generate
+       commercial value, reduce costs, or support revenue-generating activities;
+   (c) Bundling, repackaging, or white-labelling the Software;
+   (d) Using the Software as a managed service offering.
+
+   To request a commercial license, contact the Author directly.
+
+3. MODIFICATION & DERIVATIVE WORKS
+   You may modify the Software for personal, non-commercial use only.
+   Distribution of modified versions, or creation of derivative works for any
+   purpose — commercial or non-commercial — requires the Author's prior explicit
+   written consent. Any authorised derivative work must retain this License,
+   THIRD_PARTY_NOTICES.md, and all copyright notices, and must clearly attribute
+   the original Software and its Author.
+
+4. REDISTRIBUTION
+   Redistribution of Obi1 - FZCO's original portions of this Software, in
+   source or compiled form, with or without modification, is not permitted
+   without the Author's prior explicit written consent. This restriction does
+   not apply to the third-party open-source components identified in
+   THIRD_PARTY_NOTICES.md, which you may redistribute under their own licenses.
+   Sharing access to a deployed, unmodified instance for non-commercial purposes
+   among colleagues within the same organisation is permitted, provided no
+   charge is levied and this License is made available to all users.
+
+================================================================================
+RESTRICTIONS
+================================================================================
+
+No person or entity may, without the Author's prior explicit written consent:
+
+- Copy, reproduce, modify, adapt, translate, publish, or distribute the
+  Author's original portions of the Software or any portion thereof;
+- Commercialise, sublicense, sell, rent, lease, lend, assign, transfer, or
+  pledge the Software or any portion thereof;
+- Reverse engineer, decompile, disassemble, or otherwise attempt to derive the
+  source code from a compiled form of the Author's original portions of the
+  Software;
+- Remove, alter, or obscure any copyright, trademark, or attribution notice,
+  including third-party notices;
+- Claim authorship or ownership of the Software or any derivative thereof;
+- Use the Author's name, likeness, or identity to endorse or promote products
+  derived from this Software;
+- Represent this Software as an official product, tool, or publication of any
+  employer, client, or third party, including Pure Storage, Inc. or NetApp, Inc.;
+- Use this Software to provide services to third parties for compensation
+  without an authorised commercial license.
+
+================================================================================
+INTELLECTUAL PROPERTY RESERVATION
+================================================================================
+
+All rights not expressly granted in writing by Obi1 - FZCO are strictly
+reserved. This License does not transfer any ownership interest in the Software
+or any intellectual property rights therein. The Author retains all moral rights
+in the Software to the fullest extent permitted by applicable law.
+
+Nothing in this License shall be interpreted as granting any implied licence,
+ownership right, commercial right, assignment, waiver, consent, or permission
+beyond what is expressly granted in writing by Obi1 - FZCO.
+
+================================================================================
+DISCLAIMER OF WARRANTIES
+================================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, OR NON-INFRINGEMENT. THE AUTHOR
+DOES NOT WARRANT THAT THE SOFTWARE WILL BE ERROR-FREE, UNINTERRUPTED, OR THAT
+DEFECTS WILL BE CORRECTED.
+
+================================================================================
+LIMITATION OF LIABILITY
+================================================================================
+
+IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING BUT NOT LIMITED TO
+LOSS OF DATA, BUSINESS INTERRUPTION, SYSTEM DOWNTIME, OR PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES) ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+INABILITY TO USE THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGES.
+
+BY USING THIS SOFTWARE, YOU ACKNOWLEDGE AND AGREE THAT:
+(a) You are solely responsible for verifying the accuracy and suitability of
+    any data, threshold, finding, or report produced by this Software before
+    acting upon it in any production, operational, or customer-facing context;
+(b) The Author bears no liability for decisions made on the basis of this
+    Software's output, including but not limited to performance troubleshooting
+    actions, capacity or configuration changes, or escalations based on
+    findings this Software generates.
+
+================================================================================
+GOVERNING LAW
+================================================================================
+
+This License shall be governed by and construed in accordance with applicable
+law. Any disputes arising under or in connection with this License shall be
+subject to the exclusive jurisdiction of the courts of competent jurisdiction
+in the Author's place of registration at the time of the dispute.
+
+================================================================================
+CONTACT
+================================================================================
+
+For commercial licensing inquiries, permissions requests, or any questions
+regarding this License, contact the Author via the repository's issue tracker
+or through the contact information provided in the project's documentation.
+
+================================================================================
+
+Copyright (c) 2026 Obi1 - FZCO. All Rights Reserved.

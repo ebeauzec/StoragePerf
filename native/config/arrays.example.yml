@@ -1,0 +1,66 @@
+# Plumb — system inventory
+#
+# One entry per monitored system. Copy this file to arrays.yml (or use the
+# Config tab, which writes the same file) and edit it — arrays.yml is what
+# the app actually reads; this .example file is reference only.
+#
+# `vendor` selects which config/thresholds/<vendor>.yml file evaluates this
+# system and which fields below apply to it:
+#   pure_flasharray, pure_flashblade  -> scraped directly through Plumb's
+#     own authenticated proxy (host/scheme/token_env/verify_tls)
+#   netapp_ontap, netapp_storagegrid  -> collected via a bundled NetApp
+#     Harvest poller, which does its own authenticated collection
+#     (management_lif/username/password_env/datacenter)
+#
+# After editing, either restart Plumb or save from the Config tab — either
+# regenerates Prometheus's scrape targets and, for NetApp systems, Harvest's
+# poller config, with no restart of Prometheus/Harvest required.
+
+arrays:
+  # --- Pure Storage FlashArray -------------------------------------------
+  - id: fa-prod-east-01
+    name: fa-prod-east-01
+    model: FA-X90R2
+    vendor: pure_flasharray
+    host: fa-prod-east-01.mgmt.example.internal
+    scheme: https
+    metrics_path: /metrics
+    # Create via Settings > Access > API Tokens (read-only/monitor role is
+    # enough — Plumb only ever calls GET /metrics). Set the real token as
+    # an environment variable before starting Plumb; never put it in this
+    # file.
+    token_env: PURE_TOKEN_FA_PROD_EAST_01
+    verify_tls: true
+
+  # --- Pure Storage FlashBlade --------------------------------------------
+  - id: fb-media-01
+    name: fb-media-01
+    model: FlashBlade//S
+    vendor: pure_flashblade
+    host: fb-media-01.mgmt.example.internal
+    scheme: https
+    metrics_path: /metrics
+    token_env: PURE_TOKEN_FB_MEDIA_01
+    verify_tls: true
+
+  # --- NetApp ONTAP (via bundled Harvest poller) --------------------------
+  - id: ontap-cluster-01
+    name: ontap-cluster-01
+    model: "AFF A400"
+    vendor: netapp_ontap
+    management_lif: ontap-cluster-01.mgmt.example.internal
+    username: harvest-monitor
+    # Same idea as token_env above: set the real password as an environment
+    # variable, reference its name here, never the value itself.
+    password_env: NETAPP_PASSWORD_ONTAP_CLUSTER_01
+    datacenter: DC-01
+
+  # --- NetApp StorageGRID (via bundled Harvest poller) --------------------
+  - id: sg-grid-01
+    name: sg-grid-01
+    model: "StorageGRID"
+    vendor: netapp_storagegrid
+    management_lif: sg-admin-01.mgmt.example.internal
+    username: harvest-monitor
+    password_env: NETAPP_PASSWORD_SG_GRID_01
+    datacenter: DC-01

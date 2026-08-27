@@ -1,0 +1,129 @@
+# Plumb — best-practice thresholds
+#
+# This file is the entire "brain" of the enrichment layer: every panel on
+# the dashboard and every finding in the Findings feed comes from evaluating
+# one of these entries. Add a metric here and it appears everywhere with no
+# code changes.
+#
+# TWO THINGS TO KNOW BEFORE TRUSTING AN ALERT FROM THIS FILE:
+#
+# 1. Metric names are verified against Pure Storage's public native
+#    OpenMetrics naming (the `purefa_*` convention documented by the
+#    PureStorage-OpenConnect/pure-fa-openmetrics-exporter project) as of
+#    August 2026. That project's README confirms these metric names exist —
+#    but it also confirms some things do NOT exist as public metrics:
+#    controller busy%/CPU and internal media service-time have no published
+#    metric, and there is no Fibre-Channel-specific port utilization or CRC
+#    error counter — only a generic `purefa_network_interface_performance_*`
+#    family with no confirmed FC-vs-Ethernet label. That's why the back-end
+#    column below is thinner than the front-end one: it reflects what's
+#    actually published today, not a gap in this file. If your array exposes
+#    more (a newer Purity release, or your own REST-API bridge), extend this
+#    file the same way.
+#
+# 2. Pure does not publish universal numeric performance SLAs. Every
+#    severity_watch / severity_critical value below is an illustrative
+#    starting point, not an official threshold. Tune them to your own
+#    array's observed baseline after a few weeks of real history.
+#
+# Before relying on any of this in production, confirm against your own
+# array:
+#
+#   curl -sk -H "Authorization: Bearer <token>" https://<array>/metrics | less
+#
+# Fields:
+#   id                 unique key, used as the panel/finding identifier
+#   category           frontend | backend  (which console column it renders in)
+#   label              panel title shown in the UI
+#   unit               display unit
+#   query              PromQL, with {array} substituted for the array id
+#   comparison         gt = higher is worse (the only mode implemented today)
+#   severity_watch     value at/above this is "Watch"
+#   severity_critical  value at/above this is "Critical"
+#   threshold_label    human-readable ceiling shown under the chart
+#   finding.watch/critical  message templates; {value} and {threshold} are
+#                      filled in from the evaluated metric
+
+metrics:
+  - id: host_latency
+    category: frontend
+    label: "Host-Side Latency (avg)"
+    unit: ms
+    # purefa_array_performance_latency_usec{dimension} is real and confirmed;
+    # dimension is one of read/write/mirrored_write/other.
+    query: 'avg(purefa_array_performance_latency_usec{array="{array}",dimension=~"read|write"}) / 1000'
+    comparison: gt
+    severity_watch: 2.0
+    severity_critical: 3.5
+    threshold_label: "< 2.0 ms sustained"
+    finding:
+      watch: "Host-side latency is averaging {value:.1f}ms, above the {threshold:.1f}ms illustrative ceiling."
+      critical: "Host-side latency is averaging {value:.1f}ms, well above the {threshold:.1f}ms illustrative ceiling — hosts will see this directly."
+
+  - id: host_queue_depth
+    category: frontend
+    label: "Outstanding Host I/O (queue depth)"
+    unit: ops
+    # purefa_array_performance_queue_depth_ops is real and confirmed
+    # (array-wide, not per-port — Pure's public exporter doesn't break this
+    # out per FC/iSCSI port).
+    query: 'avg(purefa_array_performance_queue_depth_ops{array="{array}"})'
+    comparison: gt
+    severity_watch: 350
+    severity_critical: 450
+    threshold_label: "< 350 (illustrative)"
+    finding:
+      watch: "Outstanding host I/O is averaging {value:.0f}, above the {threshold:.0f} illustrative ceiling."
+      critical: "Outstanding host I/O is averaging {value:.0f} — hosts are likely queueing rather than the array being the limiter."
+
+  - id: network_errors
+    category: frontend
+    label: "Network Interface Errors"
+    unit: "errors/min"
+    # purefa_network_interface_performance_errors is real and confirmed, but
+    # it's generic (no confirmed label distinguishing FC from Ethernet
+    # interfaces). This sums across ALL interfaces on the array. If you can
+    # identify your FC interfaces' label value (check your /metrics output —
+    # likely an `interface` or `name` label following a ctX.FCn pattern),
+    # add it here, e.g. interface=~"ct.*\\.FC.*", to scope this to fabric
+    # ports specifically.
+    query: 'sum(rate(purefa_network_interface_performance_errors{array="{array}"}[5m])) * 60'
+    comparison: gt
+    severity_watch: 5
+    severity_critical: 15
+    threshold_label: "< 5 / min (illustrative)"
+    finding:
+      watch: "Network interface error rate is {value:.1f}/min, above the {threshold:.0f}/min illustrative ceiling — worth checking cabling/SFPs."
+      critical: "Network interface error rate is {value:.1f}/min — this points to a marginal link, not array load."
+
+  - id: replication_lag
+    category: backend
+    label: "Replication Lag (avg)"
+    unit: sec
+    # purefa_pod_replica_links_lag_average_msec is real and confirmed,
+    # reported per pod/replica-link in milliseconds. This averages across
+    # all links on the array; scope to one target with a pod/link label
+    # filter once you've confirmed its exact name in your output.
+    query: 'avg(purefa_pod_replica_links_lag_average_msec{array="{array}"}) / 1000'
+    comparison: gt
+    severity_watch: 90
+    severity_critical: 180
+    threshold_label: "< 90 sec (illustrative)"
+    finding:
+      watch: "Replication lag is averaging {value:.0f}s, above the {threshold:.0f}s illustrative target."
+      critical: "Replication lag is averaging {value:.0f}s — recovery point objective is at risk if this persists."
+
+  - id: pool_saturation
+    category: backend
+    label: "Capacity Utilization"
+    unit: "%"
+    # purefa_array_space_utilization is real, confirmed, and already a
+    # percentage — no unit conversion needed.
+    query: 'avg(purefa_array_space_utilization{array="{array}"})'
+    comparison: gt
+    severity_watch: 75
+    severity_critical: 85
+    threshold_label: "< 75% (illustrative)"
+    finding:
+      watch: "Capacity utilization is at {value:.0f}%, above the {threshold:.0f}% illustrative guidance."
+      critical: "Capacity utilization is at {value:.0f}% — capacity, not just performance, is now a near-term risk."

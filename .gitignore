@@ -1,0 +1,23 @@
+# Built/downloaded artifacts — regenerate with the scripts in native/scripts/
+# and scripts/, don't commit them (large binaries, platform-specific).
+/dist/
+/native/dist/
+/native/sidecars/
+/native/data/
+/native/.demo-venv/
+/native/config/arrays.yml
+
+# Local runtime state
+data/
+*.log
+
+# OS/editor cruft
+.DS_Store
+**/.DS_Store
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+
+# Claude Code harness state — not part of the project
+.claude/

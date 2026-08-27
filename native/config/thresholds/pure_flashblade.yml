@@ -1,0 +1,47 @@
+# Plumb — Pure Storage FlashBlade best-practice thresholds
+#
+# ⚠ LESS VERIFIED THAN THE OTHER VENDOR FILES. Pure's own metrics spec for
+# FlashBlade (PureStorage-OpenConnect/pure-fb-openmetrics-exporter,
+# specification/metrics/purefb-metrics.md, checked August 2026) documents
+# bucket- and file-system-level metrics in full, but marks several sections
+# — including `purefb_array` itself — as "TODO" / incomplete. There is no
+# confirmed array-wide latency rollup, no busy%/CPU metric, and no
+# confirmed network-error metric, the same gaps as FlashArray plus one
+# more: even the per-bucket space label values aren't fully published.
+#
+# What's below is deliberately minimal rather than padded with guesses:
+# two metrics I could verify with reasonable confidence from bucket-level
+# performance data. Verify and extend against your own array before relying
+# on this:
+#
+#   curl -sk -H "Authorization: Bearer <token>" https://<array>/metrics | less
+#
+# and check FlashBlade's real space/capacity label names against what your
+# array actually reports before adding a capacity panel.
+
+metrics:
+  - id: bucket_latency
+    category: frontend
+    label: "Bucket Latency (avg, read/write)"
+    unit: ms
+    query: 'avg(purefb_buckets_performance_latency_usec{array="{array}",dimension=~"read|write"}) / 1000'
+    comparison: gt
+    severity_watch: 5
+    severity_critical: 15
+    threshold_label: "< 5 ms (illustrative)"
+    finding:
+      watch: "Average bucket latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative ceiling."
+      critical: "Average bucket latency is {value:.1f}ms, well above the {threshold:.0f}ms illustrative ceiling — clients will see this directly."
+
+  - id: bucket_throughput
+    category: backend
+    label: "Bucket Throughput"
+    unit: ops
+    query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension=~"read|write"})'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 200000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Aggregate bucket throughput is {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Aggregate bucket throughput is {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."

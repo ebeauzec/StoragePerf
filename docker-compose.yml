@@ -1,0 +1,71 @@
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.150.0
+    command:
+      - "--storageDataPath=/storage"
+      - "--retentionPeriod=100y"
+      - "--httpListenAddr=:8428"
+    volumes:
+      - vmdata:/storage
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-targets:/etc/prometheus/targets
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=2d"
+    depends_on:
+      - victoriametrics
+    restart: unless-stopped
+
+  plumb-api:
+    image: plumb-api:local
+    build: ./backend
+    environment:
+      VM_URL: http://victoriametrics:8428
+      PLUMB_CONFIG_DIR: /config
+      PROMETHEUS_TARGETS_FILE: /prometheus-targets/pure-arrays.json
+      PLUMB_SELF_ADDRESS: plumb-api:8000
+      PLUMB_FRONTEND_DIR: /frontend
+      # Check-and-notify only: looks up newer Prometheus/VictoriaMetrics
+      # releases and a newer Pure metric-schema reference once a day and
+      # surfaces it in the Config tab. Never downloads or installs anything.
+      # Set to "false" for a fully air-gapped deployment — safe either way.
+      PLUMB_CHECK_FOR_UPDATES: "true"
+      # Real-array API tokens referenced by token_env in config/arrays.yml
+      # go here, e.g.: PURE_TOKEN_FA_PROD_EAST_01: ${PURE_TOKEN_FA_PROD_EAST_01}
+    volumes:
+      - ./config:/config
+      - ./frontend:/frontend:ro
+      - prometheus-targets:/prometheus-targets
+    ports:
+      - "8000:8000"
+    depends_on:
+      - victoriametrics
+    restart: unless-stopped
+
+  demo-array-1:
+    image: plumb-demo-exporter:local
+    build: ./demo-exporter
+    environment:
+      PROFILE: critical
+    restart: unless-stopped
+
+  demo-array-2:
+    image: plumb-demo-exporter:local
+    environment:
+      PROFILE: watch
+    restart: unless-stopped
+
+  demo-array-3:
+    image: plumb-demo-exporter:local
+    environment:
+      PROFILE: healthy
+    restart: unless-stopped
+
+volumes:
+  vmdata:
+  prometheus-targets:

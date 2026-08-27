@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plumb — Array Performance Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div class="shell">
+
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 20 L4 12 L9 12 L9 7 L15 7 L15 15 L20 15 L20 20 Z" stroke="#0a0e13" stroke-width="2" stroke-linejoin="round"/></svg>
+      </div>
+      <span class="brand-name">PLUMB</span>
+      <span class="brand-sub">Array Performance Console</span>
+    </div>
+    <div class="nav">
+      <div class="nav-item tab active" data-tab="fleet">Fleet</div>
+      <div class="nav-item tab" data-tab="config">Config</div>
+    </div>
+    <div class="topbar-right">
+      <div class="live-pill" id="updates-pill" style="display:none;"><span class="live-dot bad" style="background:var(--warn); box-shadow:0 0 0 3px rgba(240,170,58,0.15);"></span> <span id="updates-label"></span></div>
+      <div class="live-pill"><span class="live-dot" id="live-dot"></span> <span id="live-label">Connecting…</span></div>
+    </div>
+  </div>
+
+  <div id="view-fleet">
+    <div class="section-head">
+      <div class="section-title" id="fleet-count">Fleet</div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <div class="section-note" id="fleet-summary"></div>
+        <a class="btn" id="fleet-report-link" href="#" target="_blank" rel="noopener">Fleet report</a>
+      </div>
+    </div>
+    <div class="fleet-scroll" id="fleet-strip"></div>
+
+    <div class="timebar">
+      <div class="range-pills" id="range-pills"></div>
+      <div class="retention-note" id="selected-array-note"></div>
+      <div class="retention-note">Retained history: <b>unlimited</b> (VictoriaMetrics) · 15s native resolution</div>
+      <div style="display:flex; gap:8px;">
+        <a class="btn" id="array-report-link" href="#" target="_blank" rel="noopener">Report</a>
+        <a class="btn" id="array-export-link" href="#" download>Export CSV</a>
+      </div>
+    </div>
+
+    <div class="split">
+      <div>
+        <div class="col-head">
+          <span class="col-dot fe"></span>
+          <span class="col-title">Front-End — SAN &amp; Host Path</span>
+          <span class="col-sub">where the host sees latency</span>
+        </div>
+        <div id="fe-panels"></div>
+      </div>
+      <div>
+        <div class="col-head">
+          <span class="col-dot be"></span>
+          <span class="col-title">Back-End — Array Internal</span>
+          <span class="col-sub">where the array does work</span>
+        </div>
+        <div id="be-panels"></div>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <div class="section-title">Best-Practice Findings</div>
+      <div class="section-note">Evaluated against this system's vendor thresholds on every load</div>
+    </div>
+    <div class="findings-grid" id="findings"></div>
+  </div>
+
+  <div id="view-config" style="display:none;">
+    <div class="section-head">
+      <div class="section-title">Array Inventory</div>
+      <div class="section-note">Edits write to config/arrays.yml and regenerate Prometheus scrape targets immediately</div>
+    </div>
+    <div id="config-rows"></div>
+    <div style="margin-top:14px; display:flex; gap:10px;">
+      <button class="btn" id="add-array">+ Add array</button>
+      <button class="btn btn-primary" id="save-arrays">Save changes</button>
+      <span id="config-status" class="section-note"></span>
+    </div>
+
+    <div class="section-head">
+      <div class="section-title">Software &amp; Reference Updates</div>
+      <div class="section-note">Check-and-notify only — nothing here downloads or installs anything automatically</div>
+    </div>
+    <div id="updates-rows"></div>
+  </div>
+
+  <div class="footer-note">
+    <span id="footer-left">Plumb</span>
+    <span>Pure arrays: authenticated proxy → Prometheus. NetApp systems: Harvest poller → Prometheus. Both → VictoriaMetrics.</span>
+  </div>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
