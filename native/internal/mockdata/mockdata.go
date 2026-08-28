@@ -1,13 +1,13 @@
-// Package mockdata generates a plausible-looking, entirely synthetic fleet
-// in-process, for the Config tab's "Show mock data" toggle. It exists so a
-// fresh install shows the full multi-vendor experience (fleet, findings,
-// reports, export) with one click, without running the separate demo
-// exporters or having any real arrays configured yet.
-//
-// It deliberately reuses rules.BuildFindings — the same findings/health
-// logic real data goes through — so mock mode is a stand-in for the data
-// source only, not a separate, possibly-diverging code path for the
-// enrichment logic itself.
+// Package mockdata defines the synthetic seven-system, four-vendor fleet
+// behind the Config tab's "Show mock data" toggle, and the wave-function
+// math that gives each of its metrics a believable, moving value. It does
+// not evaluate panels or findings itself — internal/mockbackend serves
+// these values over real HTTP endpoints (Pure OpenMetrics text, ONTAP's
+// REST API, StorageGRID's Grid Management API), and Plumb's real
+// collection pipeline (Prometheus, VictoriaMetrics, rules.EvaluateArray)
+// takes it from there exactly as it would for a real array. That's
+// deliberate: mock mode is a stand-in for real systems, not a separate,
+// possibly-diverging code path for the enrichment logic.
 package mockdata
 
 import (
@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"plumb/internal/config"
-	"plumb/internal/rules"
-	"plumb/internal/vm"
 )
 
 // Array is one synthetic fleet member. Profile drives where its metrics sit
@@ -43,17 +41,12 @@ var Fleet = []Array{
 	{"mock-sg-grid-01", "sg-grid-01", "StorageGRID", config.VendorNetAppStorageGRID, "watch"},
 }
 
-func GetArray(id string) (Array, bool) {
-	for _, a := range Fleet {
-		if a.ID == id {
-			return a, true
-		}
-	}
-	return Array{}, false
-}
-
 func (a Array) AsConfigArray() config.Array {
 	return config.Array{ID: a.ID, Name: a.Name, Model: a.Model, Vendor: a.Vendor}
+}
+
+func (a Array) IsNetApp() bool {
+	return a.Vendor == config.VendorNetAppONTAP || a.Vendor == config.VendorNetAppStorageGRID
 }
 
 // profileFactor picks a center value and noise amplitude relative to a
@@ -118,7 +111,7 @@ func valueAt(seed string, t time.Time, center, noise float64) float64 {
 	phaseFast := float64(hashSeed(seed+"|fast")%1000) / 1000 * math.Pi * 2
 	phaseSlow := float64(hashSeed(seed+"|slow")%1000) / 1000 * math.Pi * 2
 
-	fast := math.Sin(ts/1200+phaseFast) * noise * 0.45  // ~20 min period — visible motion on 1H/24H views
+	fast := math.Sin(ts/1200+phaseFast) * noise * 0.45   // ~20 min period — visible motion on 1H/24H views
 	slow := math.Sin(ts/129600+phaseSlow) * noise * 0.35 // ~36 hour period — gives 7D/30D/1Y views their own shape
 
 	jitterSeed := hashSeed(fmt.Sprintf("%s|%d", seed, int64(ts)))
@@ -131,58 +124,12 @@ func valueAt(seed string, t time.Time, center, noise float64) float64 {
 	return v
 }
 
-// GenerateSeries produces a synthetic time series for one (array, metric)
-// pair: a stable center value (from profileFactor) plus the wave+jitter
-// from valueAt, so charts look alive rather than flat and actually vary
-// with the requested time window instead of repeating the same shape.
-// category is "frontend" or "backend" — see profileFactor for why it
-// matters.
-func GenerateSeries(seed, profile, category string, watch, critical float64, start, end time.Time, step time.Duration) []vm.Point {
+// CurrentValue returns the synthetic value for one (array, metric) at time
+// t. internal/mockbackend calls this on every request to its mock
+// endpoints — VictoriaMetrics builds up the historical series over real
+// scrape cycles from these live values, exactly like a real array, rather
+// than this package pre-computing a series itself.
+func CurrentValue(seed, profile, category string, watch, critical float64, t time.Time) float64 {
 	center, noise := profileFactor(profile, category, watch, critical)
-
-	var pts []vm.Point
-	for t := start; !t.After(end); t = t.Add(step) {
-		pts = append(pts, vm.Point{Time: float64(t.Unix()), Value: valueAt(seed, t, center, noise)})
-	}
-	return pts
-}
-
-// EvaluateArray builds a full rules.Result for one mock array — same shape
-// (panels, findings, health) a real evaluation produces, via the same
-// rules.BuildFindings logic, over synthetic series instead of a
-// VictoriaMetrics query.
-func EvaluateArray(arr Array, metrics []config.MetricDef, window time.Duration) rules.Result {
-	now := time.Now()
-	start := now.Add(-window)
-	step := window / 60
-	if step < 15*time.Second {
-		step = 15 * time.Second
-	}
-
-	panels := []rules.Panel{} // non-nil — see rules.EvaluateArray's identical comment
-	for _, m := range metrics {
-		series := GenerateSeries(arr.ID+"|"+m.ID, arr.Profile, m.Category, m.SeverityWatch, m.SeverityCritical, start, now, step)
-
-		var valPtr *float64
-		pairs := [][2]float64{}
-		sev := rules.Unknown
-		if len(series) > 0 {
-			v := series[len(series)-1].Value
-			valPtr = &v
-			sev = rules.Classify(v, true, m.SeverityWatch, m.SeverityCritical)
-			pairs = make([][2]float64, len(series))
-			for i, p := range series {
-				pairs[i] = [2]float64{p.Time, p.Value}
-			}
-		}
-
-		panels = append(panels, rules.Panel{
-			ID: m.ID, Label: m.Label, Unit: m.Unit, Category: m.Category,
-			Value: valPtr, Severity: sev, ThresholdLabel: m.ThresholdLabel,
-			Watch: m.SeverityWatch, Critical: m.SeverityCritical, Series: pairs,
-		})
-	}
-
-	findings, health := rules.BuildFindings(arr.ID, metrics, panels)
-	return rules.Result{Panels: panels, Findings: findings, Health: health}
+	return valueAt(seed, t, center, noise)
 }

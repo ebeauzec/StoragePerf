@@ -1,7 +1,8 @@
 // Package scrapeproxy implements the authenticated fetch of one Pure
 // array's native /metrics on Prometheus's behalf, so the per-array bearer
-// token lives only here, in config/arrays.yml — never in Prometheus's own
-// config, and never over an unauthenticated hop.
+// token lives only here — either in config/arrays.yml for a real array, or
+// in internal/mockbackend's own address for a mock one — never in
+// Prometheus's own config, and never over an unauthenticated hop.
 package scrapeproxy
 
 import (
@@ -15,10 +16,15 @@ import (
 	"plumb/internal/config"
 )
 
-func Handler(configDir string) http.HandlerFunc {
+// Lookup resolves an array ID to its config — real arrays.yml while mock
+// mode is off, the mock fleet (pointed at internal/mockbackend) while it's
+// on. Matches App.activeArray's signature so api.go can pass that directly.
+type Lookup func(id string) (config.Array, bool, error)
+
+func Handler(lookup Lookup) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		arr, ok, err := config.GetArray(configDir, id)
+		arr, ok, err := lookup(id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

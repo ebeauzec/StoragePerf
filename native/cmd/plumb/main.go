@@ -30,6 +30,7 @@ import (
 
 	"plumb/internal/api"
 	"plumb/internal/config"
+	"plumb/internal/mockbackend"
 	"plumb/internal/netappnative"
 	"plumb/internal/paths"
 	"plumb/internal/sidecar"
@@ -197,9 +198,16 @@ func main() {
 		RestartVM:   vmSup.start,
 		ONTAP:       netappnative.NewONTAPCollector(),
 		StorageGrid: netappnative.NewStorageGridCollector(),
+		MockBackend: mockbackend.New(),
 	}
 	if err := app.LoadSettings(); err != nil {
 		log.Fatalf("loading settings: %v", err)
+	}
+	// mock mode may have been left on from a previous run — bring its mock
+	// systems up before the first scrape cycle, same as any other startup
+	// dependency, so InitialRegenerate below sees them.
+	if err := app.EnsureMockBackend(); err != nil {
+		log.Fatalf("starting mock backend: %v", err)
 	}
 	if err := app.InitialRegenerate(); err != nil {
 		log.Fatalf("generating initial scrape config: %v", err)

@@ -4,7 +4,6 @@
 package api
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,7 +17,7 @@ import (
 
 	"plumb/internal/config"
 	"plumb/internal/export"
-	"plumb/internal/mockdata"
+	"plumb/internal/mockbackend"
 	"plumb/internal/netappnative"
 	"plumb/internal/report"
 	"plumb/internal/rules"
@@ -40,6 +39,7 @@ type App struct {
 	RestartVM   func(retentionPeriod string) // notifies main to restart VictoriaMetrics with a new -retentionPeriod
 	ONTAP       *netappnative.ONTAPCollector
 	StorageGrid *netappnative.StorageGridCollector
+	MockBackend *mockbackend.Backend
 
 	settingsMu sync.RWMutex
 	mockData   bool
@@ -76,27 +76,81 @@ func (a *App) retentionPeriod() string {
 }
 
 // saveSettings persists both settings together (they live in the same
-// settings.yml) and, if the retention period actually changed, tells main
-// to restart VictoriaMetrics with the new -retentionPeriod so the change
-// (including any resulting purge of now-out-of-window data) takes effect —
-// VictoriaMetrics only reads that flag at startup.
+// settings.yml). If the retention period changed, it tells main to restart
+// VictoriaMetrics with the new -retentionPeriod (VictoriaMetrics only
+// reads that flag at startup). If the mock-data toggle changed, it starts
+// or stops the mock backend (see internal/mockbackend) and regenerates
+// Prometheus's scrape targets to point at the mock fleet or real
+// config/arrays.yml accordingly.
 func (a *App) saveSettings(mockData bool, retention string) error {
 	if err := config.SaveSettings(a.ConfigDir, config.Settings{MockData: mockData, RetentionPeriod: retention}); err != nil {
 		return err
 	}
 	a.settingsMu.Lock()
 	retentionChanged := retention != a.retention
+	mockChanged := mockData != a.mockData
 	a.mockData = mockData
 	a.retention = retention
 	a.settingsMu.Unlock()
+
 	if retentionChanged && a.RestartVM != nil {
 		a.RestartVM(retention)
+	}
+	if mockChanged && a.MockBackend != nil {
+		if mockData {
+			if err := a.MockBackend.Start(); err != nil {
+				return err
+			}
+		} else {
+			a.MockBackend.Stop()
+		}
+	}
+	if mockChanged {
+		return a.regenerate()
+	}
+	return nil
+}
+
+// activeArrays returns whichever array list Prometheus should currently be
+// scraping: the mock fleet (pointed at internal/mockbackend's own
+// endpoints) while mock mode is on, or the real config/arrays.yml
+// otherwise. Every handler that lists or looks up "the current arrays" —
+// the fleet view, array detail, exports, reports — goes through this, so
+// mock and real arrays are handled by identical code from here on; only
+// which arrays exist differs, never how their data is fetched.
+func (a *App) activeArrays() ([]config.Array, error) {
+	if a.mockEnabled() && a.MockBackend != nil {
+		return a.MockBackend.Arrays(a.SelfAddr), nil
+	}
+	return config.LoadArrays(a.ConfigDir)
+}
+
+func (a *App) activeArray(id string) (config.Array, bool, error) {
+	arrays, err := a.activeArrays()
+	if err != nil {
+		return config.Array{}, false, err
+	}
+	for _, arr := range arrays {
+		if arr.ID == id {
+			return arr, true, nil
+		}
+	}
+	return config.Array{}, false, nil
+}
+
+// EnsureMockBackend starts the mock backend if settings.yml already had
+// mock_data:true when this process booted — called once at startup, after
+// LoadSettings, since collection needs to be wired up before the first
+// scrape happens.
+func (a *App) EnsureMockBackend() error {
+	if a.mockEnabled() && a.MockBackend != nil {
+		return a.MockBackend.Start()
 	}
 	return nil
 }
 
 func (a *App) regenerate() error {
-	arrays, err := config.LoadArrays(a.ConfigDir)
+	arrays, err := a.activeArrays()
 	if err != nil {
 		return err
 	}
@@ -114,7 +168,7 @@ func (a *App) regenerate() error {
 // scrapeproxy.Handler does for Pure arrays.
 func (a *App) handleScrapeNetApp(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	arr, ok, err := config.GetArray(a.ConfigDir, id)
+	arr, ok, err := a.activeArray(id)
 	if err != nil {
 		httpError(w, 500, err)
 		return
@@ -221,21 +275,7 @@ func toFleetEntry(id, name, model, vendor string, res rules.Result) fleetEntry {
 func (a *App) handleFleet(w http.ResponseWriter, r *http.Request) {
 	out := []fleetEntry{}
 
-	if a.mockEnabled() {
-		for _, arr := range mockdata.Fleet {
-			metrics, err := a.thresholdsFor(arr.Vendor)
-			if err != nil {
-				out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown, Sparkline: [][2]float64{}})
-				continue
-			}
-			res := mockdata.EvaluateArray(arr, metrics, time.Hour)
-			out = append(out, toFleetEntry(arr.ID, arr.Name, arr.Model, arr.Vendor, res))
-		}
-		writeJSON(w, out)
-		return
-	}
-
-	arrays, err := config.LoadArrays(a.ConfigDir)
+	arrays, err := a.activeArrays()
 	if err != nil {
 		httpError(w, 500, err)
 		return
@@ -260,22 +300,7 @@ func (a *App) handleArrayDetail(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	window := parseHours(r, 24)
 
-	if a.mockEnabled() {
-		arr, ok := mockdata.GetArray(id)
-		if !ok {
-			httpError(w, 404, fmt.Errorf("unknown mock array %q", id))
-			return
-		}
-		metrics, err := a.thresholdsFor(arr.Vendor)
-		if err != nil {
-			httpError(w, 500, err)
-			return
-		}
-		writeJSON(w, mockdata.EvaluateArray(arr, metrics, window))
-		return
-	}
-
-	arr, ok, err := config.GetArray(a.ConfigDir, id)
+	arr, ok, err := a.activeArray(id)
 	if err != nil {
 		httpError(w, 500, err)
 		return
@@ -396,24 +421,7 @@ func (a *App) handleExport(w http.ResponseWriter, r *http.Request) {
 		step = 15 * time.Second
 	}
 
-	if a.mockEnabled() {
-		arr, ok := mockdata.GetArray(id)
-		if !ok {
-			httpError(w, 404, fmt.Errorf("unknown mock array %q", id))
-			return
-		}
-		metrics, err := a.thresholdsFor(arr.Vendor)
-		if err != nil {
-			httpError(w, 500, err)
-			return
-		}
-		w.Header().Set("Content-Type", "text/csv")
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-mock-metrics-%s.csv"`, id, end.Format("20060102-1504")))
-		writeMockCSV(w, arr, metrics, start, end, step)
-		return
-	}
-
-	arr, ok, err := config.GetArray(a.ConfigDir, id)
+	arr, ok, err := a.activeArray(id)
 	if err != nil {
 		httpError(w, 500, err)
 		return
@@ -446,10 +454,11 @@ func (a *App) handleExport(w http.ResponseWriter, r *http.Request) {
 // ?start=<unix>&end=<unix> for a bounded export instead, and ?match=<promql
 // selector> to scope it to specific metrics rather than everything.
 //
-// This always reads from the real VictoriaMetrics instance regardless of
-// the Config tab's mock-data toggle — mock data is generated in-process and
-// never written to storage, so there's nothing there to back up while it's
-// on; this exports whatever real collection has actually happened.
+// This reads from the real VictoriaMetrics instance regardless of the
+// Config tab's mock-data toggle — while mock mode is on, its synthetic
+// systems are collected through the real pipeline (see
+// internal/mockbackend) just like real arrays, so their data genuinely
+// lives here too and this exports it the same way.
 func (a *App) handleBackup(w http.ResponseWriter, r *http.Request) {
 	match := r.URL.Query().Get("match")
 	if match == "" {
@@ -480,24 +489,6 @@ func (a *App) handleBackup(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, body)
 }
 
-func writeMockCSV(w http.ResponseWriter, arr mockdata.Array, metrics []config.MetricDef, start, end time.Time, step time.Duration) {
-	cw := csv.NewWriter(w)
-	defer cw.Flush()
-	cw.Write([]string{"array_id", "metric_id", "metric_label", "category", "unit", "timestamp_unix", "timestamp_iso", "value"})
-	for _, m := range metrics {
-		pts := mockdata.GenerateSeries(arr.ID+"|"+m.ID, arr.Profile, m.Category, m.SeverityWatch, m.SeverityCritical, start, end, step)
-		for _, p := range pts {
-			ts := time.Unix(int64(p.Time), 0).UTC()
-			cw.Write([]string{
-				arr.ID, m.ID, m.Label, m.Category, m.Unit,
-				strconv.FormatFloat(p.Time, 'f', 0, 64),
-				ts.Format(time.RFC3339),
-				strconv.FormatFloat(p.Value, 'f', -1, 64),
-			})
-		}
-	}
-}
-
 func (a *App) buildArrayReport(id string, window time.Duration) (report.ArrayReport, error) {
 	end := time.Now()
 	start := end.Add(-window)
@@ -506,24 +497,7 @@ func (a *App) buildArrayReport(id string, window time.Duration) (report.ArrayRep
 		step = 15 * time.Second
 	}
 
-	if a.mockEnabled() {
-		mArr, ok := mockdata.GetArray(id)
-		if !ok {
-			return report.ArrayReport{}, fmt.Errorf("unknown mock array %q", id)
-		}
-		metrics, err := a.thresholdsFor(mArr.Vendor)
-		if err != nil {
-			return report.ArrayReport{}, err
-		}
-		var allStats []rules.Stats
-		for _, m := range metrics {
-			pts := mockdata.GenerateSeries(mArr.ID+"|"+m.ID, mArr.Profile, m.Category, m.SeverityWatch, m.SeverityCritical, start, end, step)
-			allStats = append(allStats, rules.Summarize(m, pts))
-		}
-		return report.BuildArrayReport(mArr.AsConfigArray(), allStats, start, end), nil
-	}
-
-	arr, ok, err := config.GetArray(a.ConfigDir, id)
+	arr, ok, err := a.activeArray(id)
 	if err != nil {
 		return report.ArrayReport{}, err
 	}
@@ -563,20 +537,14 @@ func (a *App) handleFleetReport(w http.ResponseWriter, r *http.Request) {
 	end := time.Now()
 	start := end.Add(-window)
 
-	var ids []string
-	if a.mockEnabled() {
-		for _, arr := range mockdata.Fleet {
-			ids = append(ids, arr.ID)
-		}
-	} else {
-		arrays, err := config.LoadArrays(a.ConfigDir)
-		if err != nil {
-			httpError(w, 500, err)
-			return
-		}
-		for _, arr := range arrays {
-			ids = append(ids, arr.ID)
-		}
+	arrays, err := a.activeArrays()
+	if err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	ids := make([]string, len(arrays))
+	for i, arr := range arrays {
+		ids[i] = arr.ID
 	}
 
 	var summaries []report.FleetArraySummary
@@ -594,7 +562,7 @@ func (a *App) handleFleetReport(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /scrape/{id}", scrapeproxy.Handler(a.ConfigDir))
+	mux.HandleFunc("GET /scrape/{id}", scrapeproxy.Handler(a.activeArray))
 	mux.HandleFunc("GET /scrape/netapp/{id}", a.handleScrapeNetApp)
 	mux.HandleFunc("GET /api/fleet", a.handleFleet)
 	mux.HandleFunc("GET /api/arrays/{id}", a.handleArrayDetail)
@@ -608,6 +576,7 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/backup", a.handleBackup)
 	mux.HandleFunc("GET /api/reports/array/{id}", a.handleArrayReport)
 	mux.HandleFunc("GET /api/reports/fleet", a.handleFleetReport)
+	mockbackend.RegisterPureRoutes(mux) // inert unless targets.go points at them (mock mode on) — see internal/mockbackend
 	mux.Handle("/", http.FileServerFS(a.Frontend))
 	return mux
 }
