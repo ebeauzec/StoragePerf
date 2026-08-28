@@ -136,26 +136,42 @@ func parseHours(r *http.Request, def float64) time.Duration {
 	return time.Duration(h * float64(time.Hour))
 }
 
-// Different vendors name their headline latency/queue metric differently
-// (host_latency vs volume_avg_latency, host_queue_depth vs volume_total_ops)
-// — the fleet card just wants "the" latency/queue figure, so it looks for
-// the category+role rather than a hardcoded cross-vendor ID.
+// Different vendors name their headline latency metric differently
+// (host_latency vs volume_avg_latency) — the fleet card just wants "the"
+// latency figure, so it looks for the category+role rather than a
+// hardcoded cross-vendor ID.
 func isLatencyPanel(id string) bool {
 	return id == "host_latency" || id == "volume_avg_latency" || id == "metadata_query_latency" || id == "bucket_latency"
 }
-func isQueuePanel(id string) bool {
-	return id == "host_queue_depth" || id == "volume_total_ops" || id == "s3_operations" || id == "bucket_throughput"
+
+// secondaryStat picks each vendor's own best available "at a glance" second
+// stat for the fleet tile. This deliberately does NOT assume every vendor
+// publishes a comparable ops/queue-depth metric — ONTAP and StorageGRID's
+// thresholds files have no such metric (see config/thresholds/*.yml), so
+// mapping their fleet tile to node CPU busy instead is a real, correctly
+// labeled stat rather than a permanently blank "Queue" field from looking
+// up a metric ID (volume_total_ops / s3_operations) that was never defined.
+func secondaryStat(id string) (ok bool, label, unit string) {
+	switch id {
+	case "host_queue_depth", "bucket_throughput":
+		return true, "Queue", ""
+	case "node_cpu_busy", "node_cpu":
+		return true, "CPU", "%"
+	}
+	return false, "", ""
 }
 
 type fleetEntry struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	Model      string         `json:"model"`
-	Vendor     string         `json:"vendor"`
-	Health     rules.Severity `json:"health"`
-	QueueDepth *float64       `json:"queue_depth"`
-	Latency    *float64       `json:"latency"`
-	Sparkline  [][2]float64   `json:"sparkline"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Model          string         `json:"model"`
+	Vendor         string         `json:"vendor"`
+	Health         rules.Severity `json:"health"`
+	Secondary      *float64       `json:"secondary_value"`
+	SecondaryLabel string         `json:"secondary_label"`
+	SecondaryUnit  string         `json:"secondary_unit"`
+	Latency        *float64       `json:"latency"`
+	Sparkline      [][2]float64   `json:"sparkline"`
 }
 
 func toFleetEntry(id, name, model, vendor string, res rules.Result) fleetEntry {
@@ -168,8 +184,10 @@ func toFleetEntry(id, name, model, vendor string, res rules.Result) fleetEntry {
 			entry.Latency = p.Value
 			entry.Sparkline = p.Series
 		}
-		if isQueuePanel(p.ID) {
-			entry.QueueDepth = p.Value
+		if ok, label, unit := secondaryStat(p.ID); ok {
+			entry.Secondary = p.Value
+			entry.SecondaryLabel = label
+			entry.SecondaryUnit = unit
 		}
 	}
 	return entry

@@ -102,7 +102,7 @@ async function loadFleet() {
         ${healthChip(a.health)}
       </div>
       <div class="fleet-spark">${sparkSmall(a.sparkline, healthColor(a.health))}</div>
-      <div class="fleet-stats"><span>Queue <b>${a.queue_depth !== null && a.queue_depth !== undefined ? fmt(a.queue_depth, 0) : "—"}</b></span><span>Lat <b>${a.latency !== null && a.latency !== undefined ? fmt(a.latency, 1) + "ms" : "—"}</b></span></div>
+      <div class="fleet-stats"><span>${a.secondary_label || "Queue"} <b>${a.secondary_value !== null && a.secondary_value !== undefined ? fmt(a.secondary_value, 0) + (a.secondary_unit || "") : "—"}</b></span><span>Lat <b>${a.latency !== null && a.latency !== undefined ? fmt(a.latency, 1) + "ms" : "—"}</b></span></div>
     </div>`
     )
     .join("");
@@ -277,6 +277,17 @@ function configCardHtml(a, i) {
         <option value="https" ${a.scheme !== "http" ? "selected" : ""}>https</option>
         <option value="http" ${a.scheme === "http" ? "selected" : ""}>http</option>
       </select>`
+    ) +
+    // Native Purity's OpenMetrics exporter serves several category-scoped
+    // paths (/metrics, /metrics/array, /metrics/pods, ...) — bare /metrics
+    // is documented to return everything combined on the exporter this was
+    // built against, but that's not guaranteed across every Purity version,
+    // so this needs to be a field you can change on-site if it 404s.
+    textField("Metrics path", "metrics_path", a.metrics_path || "/metrics", "/metrics") +
+    field(
+      "Verify TLS certificate",
+      `<label class="inline-checkbox"><input type="checkbox" data-field="verify_tls" ${a.verify_tls ? "checked" : ""}> <span>Off by default — most arrays ship a self-signed cert</span></label>`,
+      "span-2"
     );
   const netappFields =
     textField("Management LIF / Grid address", "management_lif", a.management_lif, "", "span-2") +
@@ -303,12 +314,20 @@ function configCardHtml(a, i) {
 function readConfigRows() {
   return Array.from(document.querySelectorAll(".config-card")).map((row) => {
     const get = (f) => row.querySelector(`[data-field="${f}"]`)?.value.trim() || "";
+    const getChecked = (f) => !!row.querySelector(`[data-field="${f}"]`)?.checked;
     const vendor = get("vendor");
     const base = { id: get("id"), name: get("name"), model: get("model"), vendor };
     if (isNetApp(vendor)) {
       return { ...base, management_lif: get("management_lif"), username: get("username"), password_env: get("password_env") || undefined, datacenter: get("datacenter") };
     }
-    return { ...base, host: get("host"), token_env: get("token_env") || undefined, scheme: get("scheme") || "https", metrics_path: "/metrics", verify_tls: get("scheme") !== "http" };
+    return {
+      ...base,
+      host: get("host"),
+      token_env: get("token_env") || undefined,
+      scheme: get("scheme") || "https",
+      metrics_path: get("metrics_path") || "/metrics",
+      verify_tls: getChecked("verify_tls"),
+    };
   });
 }
 

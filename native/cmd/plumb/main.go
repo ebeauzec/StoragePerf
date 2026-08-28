@@ -56,6 +56,16 @@ func writePrometheusConfig(path, targetsPath, vmURL string) error {
 		"scrape_configs": []map[string]any{
 			{
 				"job_name": "plumb",
+				// Explicit, not left to Prometheus's own default (10s):
+				// Pure arrays are scraped through our own proxy
+				// (internal/scrapeproxy), whose HTTP client also carries a
+				// 10s timeout for the real request to the array. Leaving
+				// scrape_timeout at its implicit 10s default means both
+				// timeouts race each other on a slow-to-respond real
+				// array; 15s (the max Prometheus allows — it can't exceed
+				// scrape_interval) gives the proxy's own timeout room to
+				// fire first and return a clean error instead.
+				"scrape_timeout": "15s",
 				"file_sd_configs": []map[string]any{
 					{"files": []string{targetsPath}, "refresh_interval": "15s"},
 				},
