@@ -3,6 +3,10 @@ const state = {
   selectedId: null,
   hours: 24,
   arraysConfig: [],
+  // finding.ref values the user has expanded — kept across the 15s auto-refresh
+  // (renderFleetView() replaces #findings' innerHTML wholesale every tick, which
+  // would otherwise silently re-collapse anything the user had opened)
+  expandedFindings: new Set(),
 };
 
 const RANGES = [
@@ -156,7 +160,8 @@ function findingHtml(f, idx) {
   const investigate = f.investigate || [];
   const remediate = f.remediate || [];
   const hasDetail = investigate.length > 0 || remediate.length > 0;
-  return `<div class="finding sev-${f.severity} ${hasDetail ? "has-detail" : ""}" data-idx="${idx}" ${hasDetail ? 'tabindex="0" role="button" aria-expanded="false"' : ""}>
+  const isExpanded = hasDetail && state.expandedFindings.has(f.ref);
+  return `<div class="finding sev-${f.severity} ${hasDetail ? "has-detail" : ""} ${isExpanded ? "expanded" : ""}" data-idx="${idx}" data-ref="${f.ref}" ${hasDetail ? `tabindex="0" role="button" aria-expanded="${isExpanded ? "true" : "false"}"` : ""}>
     <div class="finding-top">
       <span class="finding-sev">${f.severity}</span>
       <span class="finding-tag tag-${f.tag}">${f.tag === "fe" || f.tag === "frontend" ? "Front-End" : f.tag === "be" || f.tag === "backend" ? "Back-End" : "Fleet-wide"}</span>
@@ -194,6 +199,9 @@ function bindFindingToggles() {
     const toggle = () => {
       const expanded = el.classList.toggle("expanded");
       el.setAttribute("aria-expanded", expanded ? "true" : "false");
+      const ref = el.dataset.ref;
+      if (expanded) state.expandedFindings.add(ref);
+      else state.expandedFindings.delete(ref);
     };
     el.addEventListener("click", toggle);
     el.addEventListener("keydown", (e) => {
