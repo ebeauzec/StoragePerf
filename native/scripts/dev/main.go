@@ -65,7 +65,7 @@ func main() {
 			fatal(fmt.Errorf("copying sidecars: %w", err))
 		}
 	} else {
-		fmt.Printf("    (no sidecars staged for %s — run scripts/fetch-sidecars.sh first if you need Prometheus/VictoriaMetrics/Harvest)\n", platform)
+		fmt.Printf("    (no sidecars staged for %s — run scripts/fetch-sidecars.sh first if you need Prometheus/VictoriaMetrics)\n", platform)
 	}
 
 	configDst := filepath.Join(runDir, "config")

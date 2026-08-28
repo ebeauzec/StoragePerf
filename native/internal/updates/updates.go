@@ -28,11 +28,13 @@ type target struct {
 	id, label, repo, current string
 }
 
+// current == "" marks an informational-only reference (no bundled binary,
+// no version comparison) — see the note attached to these in checkOnce.
 var targets = []target{
 	{"prometheus", "Prometheus", "prometheus/prometheus", "v3.14.0"},
 	{"victoriametrics", "VictoriaMetrics", "VictoriaMetrics/VictoriaMetrics", "v1.150.0"},
-	{"harvest", "NetApp Harvest", "NetApp/harvest", "v26.08.0"},
 	{"pure_exporter_reference", "Pure metric-schema reference", "PureStorage-OpenConnect/pure-fa-openmetrics-exporter", ""},
+	{"harvest_reference", "NetApp Harvest metric-schema reference", "NetApp/harvest", ""},
 }
 
 const thresholdsCheckedAgainst = "2026-08-27"
@@ -115,13 +117,13 @@ func (c *Checker) checkOnce() {
 				chk.UpdateAvailable = &avail
 			}
 		}
+		if t.current == "" {
+			chk.Note = fmt.Sprintf(
+				"Informational only — config/thresholds/*.yml and the native NetApp collector (internal/netappnative) were checked against this project's published metric names and source on %s. A newer tag here doesn't mean they're wrong, just that it may be worth re-checking.",
+				thresholdsCheckedAgainst,
+			)
+		}
 		results[i] = chk
-	}
-	if len(results) > 0 {
-		results[len(results)-1].Note = fmt.Sprintf(
-			"Informational only — config/thresholds/*.yml were checked against published vendor metric names on %s. A newer tag here doesn't mean your thresholds are wrong, just that it may be worth re-checking.",
-			thresholdsCheckedAgainst,
-		)
 	}
 
 	c.mu.Lock()

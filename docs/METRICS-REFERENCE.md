@@ -29,14 +29,17 @@ are guessed.
 
 | Vendor | Collection path | Why |
 |---|---|---|
-| Pure FlashArray / FlashBlade | Plumb's own `/scrape/{id}` proxy fetches the array's native OpenMetrics endpoint directly, using a per-array API token | The array itself serves the metrics — Purity has run a native OpenMetrics exporter since 6.4.2+ (FlashArray) / equivalent releases (FlashBlade). Plumb's proxy exists so each array's token stays in one config file, never in Prometheus's own config |
-| NetApp ONTAP | A bundled [Harvest](https://github.com/NetApp/harvest) poller, run as a Plumb-managed subprocess, does its own authenticated REST/RestPerf collection against the cluster and exposes a plain local Prometheus endpoint for Plumb's Prometheus to scrape | ONTAP has no native Prometheus endpoint of its own — Harvest is NetApp's own official answer to this, and per NetApp's 2026 roadmap is explicitly the vendor-supported way to get ONTAP into a consistent Prometheus metric model |
-| NetApp StorageGRID | Same Harvest mechanism, using Harvest's `StorageGrid` collector against the Grid Management API | StorageGRID also runs its own internal Prometheus on Admin Nodes (reachable directly via the Grid Management API with a client certificate) — Harvest is used here for a collection mechanism consistent with the ONTAP path, so both NetApp products land in Plumb the same way |
+| Pure FlashArray / FlashBlade | Plumb's own `/scrape/{id}` proxy fetches the array's native OpenMetrics endpoint directly, using a per-array API token | The array itself serves the metrics — FlashArray has run a native OpenMetrics exporter since Purity//FA 6.7.0+ (earlier versions need Pure's separate, now-deprecated `pure-fa-openmetrics-exporter`); FlashBlade has no native exporter yet and still requires Pure's separate `pure-fb-om-exporter`. Plumb's proxy exists so each array's token stays in one config file, never in Prometheus's own config |
+| NetApp ONTAP | Plumb's own in-process collector (`internal/netappnative/ontap.go`) calls the cluster's REST API directly (basic auth) on every scrape and translates the response into Prometheus metrics itself | No separate collector process to run — the same account and permissions NetApp's Harvest setup docs describe (readonly REST role, `http` application) work here too, since it's the same REST endpoints |
+| NetApp StorageGRID | Plumb's own in-process collector (`internal/netappnative/storagegrid.go`) logs into the Grid Management API and runs PromQL directly against the grid's own embedded Prometheus | StorageGRID already runs a real Prometheus internally — this reuses it rather than re-implementing anything |
 
-**Platform note:** NetApp only publishes a **linux/amd64** Harvest binary.
-NetApp monitoring is only available in Plumb's linux/amd64 distribution;
-Pure monitoring works on every platform Plumb ships for. See
-[../native/README.md](../native/README.md).
+**Platform note:** all four vendors work on every platform Plumb ships for
+(Linux, macOS, Windows). Through v0.6.1, NetApp collection went through a
+bundled copy of NetApp's own Harvest, which only published linux/amd64
+binaries — `internal/netappnative` removes that dependency, at the cost of
+two ONTAP metrics Harvest used to publish (`aggr_disk_busy`,
+`nic_utilization`) not being produced; see that package's doc comment for
+why. See [../native/README.md](../native/README.md).
 
 ---
 
@@ -118,36 +121,45 @@ own array's `/metrics` output, this file is the place to extend.
 ## 5. NetApp ONTAP
 
 **Config file:** `config/thresholds/netapp_ontap.yml`
-**Collection:** bundled Harvest poller (linux/amd64 only)
-**Reference:** [NetApp/harvest](https://github.com/NetApp/harvest) Grafana
-dashboard definitions (Apache-2.0) — Harvest's own published visualizations
-of the exact metrics it exposes
+**Collection:** Plumb's own in-process collector (`internal/netappnative/ontap.go`),
+calling the cluster's REST API directly — no separate poller process, works
+on every platform
+**Reference:** [NetApp/harvest](https://github.com/NetApp/harvest)'s RestPerf
+collector source and Grafana dashboard definitions (Apache-2.0), plus
+NetApp's own REST API documentation — used to confirm both the metric names
+and the exact calculation each requires (see the package's doc comment for
+the full source trail per metric)
 
 | Metric ID | Prometheus metric | Category | What it measures | Interpretation |
 |---|---|---|---|---|
-| `volume_avg_latency` | `volume_avg_latency` | Front-end | Average per-volume latency, in milliseconds directly (no unit conversion needed) | NetApp's own guidance is explicit that this is workload-dependent — see [PERFORMANCE-ANALYSIS.md §6](PERFORMANCE-ANALYSIS.md#6-why-plumbs-thresholds-are-illustrative-not-gospel) for their own published example |
-| `nic_utilization` | `nic_util_percent` (max across ports) | Front-end | Network port utilization percentage | A real, confirmed utilization metric — unlike Pure, ONTAP's public metrics do publish this directly, per-port |
-| `nic_errors` | `nic_rx_crc_errors` (rate) | Front-end | CRC/receive errors, genuinely attributable to a specific port | The most direct front-end error signal of any vendor Plumb supports — no generic-vs-specific caveat needed here |
-| `node_cpu_busy` | `node_cpu_busy` | Back-end | Controller/node CPU busy percentage | This is the metric Pure's public endpoint doesn't have an equivalent for — ONTAP's correlation findings can speak to "is the controller itself busy" with real data, not just an absence of other symptoms |
-| `aggr_disk_busy` | `aggr_disk_busy` | Back-end | Aggregate-level disk busy percentage | The media-side counterpart to `node_cpu_busy` — high values here point at the disks/SSDs themselves, not the controller |
+| `volume_avg_latency` | `volume_avg_latency` | Front-end | Cluster-wide average latency, in milliseconds directly (no unit conversion needed) | NetApp's own guidance is explicit that this is workload-dependent — see [PERFORMANCE-ANALYSIS.md §6](PERFORMANCE-ANALYSIS.md#6-why-plumbs-thresholds-are-illustrative-not-gospel) for their own published example |
+| `nic_utilization` | `nic_util_percent` | Front-end | Network port utilization percentage | **Not produced.** A confirmed correct formula exists (max of receive/transmit throughput vs. link speed, from Harvest's own Nic plugin source), but it needs ONTAP's raw performance counter-tables API, whose bulk-fetch query mechanics couldn't be confirmed without a live cluster — see the package doc comment |
+| `nic_errors` | `nic_rx_crc_errors` (rate) | Front-end | Total receive+transmit errors per network port | Sourced from the port's general error counters, not the CRC-specific counter Harvest itself reads (which lives behind the same unconfirmed counter-tables API as `nic_utilization`) — a reasonable but less precise proxy for "this link has a problem" |
+| `node_cpu_busy` | `node_cpu_busy` | Back-end | Controller/node CPU busy percentage | Computed as a ratio of two counters' deltas between polls (NetApp's own documented single-sample formula is confirmed wrong — see the package doc comment) — this is the metric Pure's public endpoint doesn't have an equivalent for |
+| `aggr_disk_busy` | `aggr_disk_busy` | Back-end | Aggregate-level disk busy percentage | **Not produced** — same unconfirmed counter-tables API dependency as `nic_utilization` |
 | `snapmirror_lag` | `snapmirror_lag_time` | Back-end | Replication lag, already in seconds | The only vendor here whose replication-lag metric needs no unit conversion at all |
 | `aggr_capacity` | `aggr_space_used_percent` | Back-end | Aggregate capacity utilization | Same interpretation as Pure's capacity metric — a leading performance indicator, not purely a capacity one |
 
-**Why ONTAP's back-end column is the most complete:** Harvest's REST/RestPerf
-collectors expose genuine controller- and media-level utilization metrics
-that neither Pure's nor StorageGRID's public endpoints currently do. This
-means the correlation finding (front-end bad, back-end clean →
-"upstream") is making its strongest, most literal claim for ONTAP arrays —
-it's checking real internal-load metrics, not just the absence of
-capacity/replication problems.
+**On the back-end column's two gaps:** `aggr_disk_busy` and `nic_utilization`
+would otherwise make ONTAP's back-end column the most complete of any
+vendor Plumb supports, since Harvest's REST/RestPerf collectors do expose
+genuine controller- and media-level utilization metrics that neither Pure's
+nor StorageGRID's public endpoints currently do. Both have a confirmed
+formula (see the package doc comment) — what's missing is confidence in the
+counter-tables API's bulk-query mechanics, which couldn't be verified
+without a live cluster. The correlation finding still works correctly with
+what *is* collected; it just has one fewer confirming signal on ONTAP than
+it otherwise could.
 
 ---
 
 ## 6. NetApp StorageGRID
 
 **Config file:** `config/thresholds/netapp_storagegrid.yml`
-**Collection:** bundled Harvest poller with the `StorageGrid` collector
-(linux/amd64 only)
+**Collection:** Plumb's own in-process collector (`internal/netappnative/storagegrid.go`),
+which logs into the Grid Management API and runs PromQL directly against
+the grid's own embedded Prometheus — no separate poller process, works on
+every platform
 **Reference:** NetApp's official documentation, "Commonly used Prometheus
 metrics" (docs.netapp.com/us-en/storagegrid) — these are NetApp-published,
 not third-party reverse-engineered
@@ -174,12 +186,14 @@ the metric names here should never be trusted blindly:
 curl -sk -H "Authorization: Bearer <token>" https://<array>/metrics | less
 ```
 
-**NetApp ONTAP / StorageGRID (via the bundled Harvest poller):**
+**NetApp ONTAP / StorageGRID (via Plumb's own collector):**
 ```bash
-curl http://127.0.0.1:<poller-port>/metrics | grep <metric_name>
+curl http://localhost:8000/scrape/netapp/<array-id> | grep <metric_name>
 ```
-(poller ports are assigned automatically — check `data/generated/harvest.yml`
-for the port assigned to each array)
+This is the exact same request Prometheus itself makes every 15 seconds —
+a metric that failed to collect this poll shows up as a `#` comment line
+explaining why (unreachable host, auth failure, missing field), instead of
+just silently not appearing.
 
 If a metric name in a threshold file doesn't match what you see, update the
 `query` field in that file. Nothing else needs to change — the panels,

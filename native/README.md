@@ -1,9 +1,10 @@
 # Plumb (native) — zero-install distribution
 
 This is the self-contained build: one executable per OS that embeds the
-frontend and launches bundled Prometheus + VictoriaMetrics (and, on
-linux/amd64, NetApp Harvest) as child processes. No Docker, no Python, no
-separately-installed anything — unzip and run.
+frontend and launches bundled Prometheus + VictoriaMetrics as child
+processes, and collects from NetApp systems directly in-process (no
+separate collector). No Docker, no Python, no separately-installed
+anything — unzip and run, on any platform.
 
 ## Using a released distribution
 
@@ -30,8 +31,8 @@ go run ./scripts/dev
 This builds Plumb from whatever's currently in the source tree, always runs
 it from the same fixed location (`native/run/`, gitignored), and — critically
 — stops whatever it previously started there first, including the sidecar
-processes (Prometheus/VictoriaMetrics/Harvest), not just the top-level
-binary. Run it again after any change and you're always looking at current
+processes (Prometheus/VictoriaMetrics), not just the top-level binary. Run
+it again after any change and you're always looking at current
 code; there's no version to track or stale copy to accidentally be running.
 Works the same way on Linux, macOS, and Windows — it's a Go program, not a
 shell script, so there's nothing platform-specific to invoke.
@@ -49,12 +50,16 @@ threshold file (`config/thresholds/<vendor>.yml`) that scores it:
 | vendor | collected via | platforms |
 |---|---|---|
 | `pure_flasharray`, `pure_flashblade` | Plumb's own authenticated scrape proxy, direct to the array | all |
-| `netapp_ontap`, `netapp_storagegrid` | bundled NetApp Harvest poller | **linux/amd64 only** — NetApp publishes no other platform's Harvest build |
+| `netapp_ontap`, `netapp_storagegrid` | Plumb's own in-process collector (`internal/netappnative`), direct to the cluster's REST API / grid's Management API | all |
 
-On other platforms, NetApp arrays in `arrays.yml` are accepted but simply
-won't collect data — Plumb logs why and keeps running everything else
-normally; Pure monitoring is unaffected. See `config/arrays.example.yml`
-for the fields each vendor needs.
+See `config/arrays.example.yml` for the fields each vendor needs. Earlier
+versions collected NetApp systems via a bundled copy of NetApp's own
+Harvest, which only published linux/amd64 binaries; `internal/netappnative`
+replaces that with an independent collector (written from Harvest's and
+NetApp's own published source — see `../THIRD_PARTY_NOTICES.md`) that works
+on every platform, at the cost of two ONTAP metrics Harvest used to publish
+(`aggr_disk_busy`, `nic_utilization`) not being produced — see that
+package's doc comment for why.
 
 ## Reports and export
 
@@ -75,7 +80,7 @@ The Fleet/Report/Export CSV buttons in the UI are these same endpoints.
 Requires Go 1.22+.
 
 ```bash
-./scripts/fetch-sidecars.sh   # downloads pinned Prometheus/VictoriaMetrics/Harvest releases into sidecars/
+./scripts/fetch-sidecars.sh   # downloads pinned Prometheus/VictoriaMetrics releases into sidecars/
 ./scripts/build-native.sh     # cross-compiles plumb + assembles dist/plumb-<version>-<platform>.(tar.gz|zip)
 ```
 

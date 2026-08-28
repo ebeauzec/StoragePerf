@@ -3,8 +3,8 @@
 // Unix (macOS/Linux) process-tree handling. Plumb is started in its own
 // process group (Setpgid) specifically so we can stop the *group* next
 // time — that's what takes the sidecar children (Prometheus,
-// VictoriaMetrics, Harvest) down along with the top-level binary, instead
-// of orphaning them to keep holding their ports.
+// VictoriaMetrics) down along with the top-level binary, instead of
+// orphaning them to keep holding their ports.
 package main
 
 import (

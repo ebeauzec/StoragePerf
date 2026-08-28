@@ -11,13 +11,12 @@ import (
 )
 
 type Layout struct {
-	Root      string // directory containing the running executable
-	Config    string // config/
-	Data      string // data/ (VictoriaMetrics storage, Prometheus TSDB, Harvest state, reports)
-	Sidecars  string // sidecars/<os>_<arch>/
-	Prometheus string
+	Root            string // directory containing the running executable
+	Config          string // config/
+	Data            string // data/ (VictoriaMetrics storage, Prometheus TSDB, reports)
+	Sidecars        string // sidecars/<os>_<arch>/
+	Prometheus      string
 	VictoriaMetrics string
-	Harvest   string
 }
 
 func exeName(base string) string {
@@ -63,7 +62,6 @@ func Resolve() (Layout, error) {
 		Sidecars:        sidecars,
 		Prometheus:      filepath.Join(sidecars, exeName("prometheus")),
 		VictoriaMetrics: filepath.Join(sidecars, exeName("victoria-metrics")),
-		Harvest:         filepath.Join(sidecars, exeName("harvest")),
 	}, nil
 }
 
@@ -71,7 +69,6 @@ func (l Layout) EnsureDataDirs() error {
 	for _, d := range []string{
 		filepath.Join(l.Data, "victoriametrics"),
 		filepath.Join(l.Data, "prometheus"),
-		filepath.Join(l.Data, "harvest"),
 		filepath.Join(l.Data, "logs"),
 		filepath.Join(l.Data, "reports"),
 		filepath.Join(l.Data, "generated"),

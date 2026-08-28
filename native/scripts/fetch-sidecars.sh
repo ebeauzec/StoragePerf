@@ -1,20 +1,14 @@
 #!/usr/bin/env bash
-# Downloads the exact pinned Prometheus, VictoriaMetrics, and (Linux/amd64
-# only — see below) NetApp Harvest release binaries for every platform
-# Plumb ships for, and lays them out under sidecars/<os>_<arch>/ exactly
-# where cmd/plumb expects to find them at runtime.
-#
-# NetApp's Harvest project only publishes a linux/amd64 build (no arm64, no
-# darwin, no windows) as of this writing — so NetApp ONTAP/StorageGRID
-# monitoring is only available in the linux_amd64 distribution. Pure
-# FlashArray/FlashBlade monitoring works on every platform regardless,
-# since it doesn't depend on Harvest at all.
+# Downloads the exact pinned Prometheus and VictoriaMetrics release
+# binaries for every platform Plumb ships for, and lays them out under
+# sidecars/<os>_<arch>/ exactly where cmd/plumb expects to find them at
+# runtime. NetApp ONTAP/StorageGRID collection has no external sidecar —
+# see internal/netappnative — so it works identically on every platform.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 PROM_VERSION=3.14.0
 VM_VERSION=1.150.0
-HARVEST_VERSION=26.08.0
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
@@ -67,21 +61,6 @@ place_victoriametrics() {
   echo "  -> $dir/${exe}"
 }
 
-place_harvest_linux_amd64() {
-  local dir="sidecars/linux_amd64"
-  mkdir -p "$dir"
-  local archive="$WORK/harvest.tar.gz"
-  fetch "https://github.com/NetApp/harvest/releases/download/v${HARVEST_VERSION}/harvest-${HARVEST_VERSION}-1_linux_amd64.tar.gz" "$archive"
-  local extract="$WORK/harvest-linux-amd64"
-  mkdir -p "$extract"
-  tar -xzf "$archive" -C "$extract"
-  local src
-  src=$(find "$extract" -type f -name "harvest" | head -1)
-  cp "$src" "$dir/harvest"
-  chmod +x "$dir/harvest"
-  echo "  -> $dir/harvest"
-}
-
 echo "== Prometheus v${PROM_VERSION} =="
 place_prometheus linux   amd64 tar.gz prometheus
 place_prometheus linux   arm64 tar.gz prometheus
@@ -95,9 +74,6 @@ place_victoriametrics linux   arm64 tar.gz victoria-metrics
 place_victoriametrics darwin  amd64 tar.gz victoria-metrics
 place_victoriametrics darwin  arm64 tar.gz victoria-metrics
 place_victoriametrics windows amd64 zip    victoria-metrics.exe
-
-echo "== NetApp Harvest v${HARVEST_VERSION} (linux/amd64 only — see script header) =="
-place_harvest_linux_amd64
 
 echo
 echo "Sidecars staged under ./sidecars/. Not committed to source control by"

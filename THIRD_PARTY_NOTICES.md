@@ -27,17 +27,23 @@ launches them as child processes; it does not modify or relink them.
 |---|---|---|---|---|
 | **Prometheus** | v3.14.0 | Apache License 2.0 | The Prometheus Authors | https://github.com/prometheus/prometheus |
 | **VictoriaMetrics** | v1.150.0 (community/single-node edition) | Apache License 2.0 | VictoriaMetrics, Inc. | https://github.com/VictoriaMetrics/VictoriaMetrics |
-| **NetApp Harvest** | v26.08.0 (linux/amd64 only — NetApp does not publish other platform builds) | Apache License 2.0 | NetApp, Inc. | https://github.com/NetApp/harvest |
 
 Per Apache License 2.0 §4, the full license text for each is included at
 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt), and this notice
 accompanies every distributed copy of the compiled packages that contain
-these binaries. Prometheus's and Harvest's own upstream NOTICE files (which
-in turn credit the third-party components *those* projects bundle) are
-preserved unmodified at
-[`LICENSES/NOTICES/prometheus.NOTICE`](LICENSES/NOTICES/prometheus.NOTICE) and
-[`LICENSES/NOTICES/harvest.NOTICE`](LICENSES/NOTICES/harvest.NOTICE).
+these binaries. Prometheus's own upstream NOTICE file (which in turn credits
+the third-party components *it* bundles) is preserved unmodified at
+[`LICENSES/NOTICES/prometheus.NOTICE`](LICENSES/NOTICES/prometheus.NOTICE).
 VictoriaMetrics does not publish a NOTICE file upstream.
+
+NetApp Harvest was previously bundled here (through v0.6.1) as the
+NetApp ONTAP/StorageGRID collector, but only ever published linux/amd64
+binaries — no arm64, darwin, or windows build exists. It has been replaced
+with an independent, in-process collector (`native/internal/netappnative/`)
+written by Plumb's author from Harvest's and NetApp's own publicly published
+source code, documentation, and Grafana dashboard definitions (see the table
+below) — Harvest's binary is no longer downloaded, bundled, or executed by
+Plumb.
 
 ---
 
@@ -90,15 +96,26 @@ Plumb's `config/thresholds/*.yml` files query metric names that Pure Storage
 and NetApp themselves publish for third-party Prometheus/OpenMetrics
 consumption. Writing PromQL against a vendor's own published metric names is
 an interoperability activity, not a reproduction of the referenced project's
-source code — **no source code from any of the projects below is included in
-Plumb.** They are listed here purely for attribution and traceability, so
-the exact metric-name source is auditable.
+source code. For NetApp ONTAP specifically, `native/internal/netappnative/`
+also consults Harvest's published Go source (not just its metric names) to
+confirm the *calculation* a metric requires — e.g. that ONTAP's REST API
+returns raw cumulative counters requiring a delta-of-two-samples computation,
+not a pre-computed value, and which counter pairs with which as numerator
+and denominator. This is the same category of activity as implementing a
+documented algorithm from a specification: **no source code from any of the
+projects below is copied into Plumb** — `netappnative`'s Go implementation
+is the author's own, independently written to reproduce the same
+well-established, standard performance-counter math (delta-of-rates,
+counter/denominator ratios) that Harvest's own code documents, not a port or
+derivative of Harvest's implementation. They are listed here purely for
+attribution and traceability, so the exact source of every metric name and
+formula is auditable.
 
 | Reference project | Publisher | License | Used for |
 |---|---|---|---|
 | [pure-fa-openmetrics-exporter](https://github.com/PureStorage-OpenConnect/pure-fa-openmetrics-exporter) | Pure Storage, Inc. (PureStorage-OpenConnect) | Apache License 2.0 | Confirming Pure FlashArray's `purefa_*` metric names |
 | [pure-fb-openmetrics-exporter](https://github.com/PureStorage-OpenConnect/pure-fb-openmetrics-exporter) | Pure Storage, Inc. (PureStorage-OpenConnect) | Apache License 2.0 | Confirming Pure FlashBlade's `purefb_*` metric names |
-| [NetApp/harvest](https://github.com/NetApp/harvest) (Grafana dashboard definitions) | NetApp, Inc. | Apache License 2.0 | Confirming ONTAP metric names Harvest exposes (`volume_avg_latency`, `node_cpu_busy`, `snapmirror_lag_time`, etc.) |
+| [NetApp/harvest](https://github.com/NetApp/harvest) (RestPerf collector source, object templates, Grafana dashboard definitions) | NetApp, Inc. | Apache License 2.0 | Confirming ONTAP metric names (`volume_avg_latency`, `node_cpu_busy`, `snapmirror_lag_time`, `nic_rx_crc_errors`, `aggr_space_used_percent`) and the counter-delta/ratio math `native/internal/netappnative/ontap.go` independently implements to compute them from ONTAP's REST API |
 | NetApp StorageGRID product documentation ("Commonly used Prometheus metrics") | NetApp, Inc. | NetApp's standard documentation terms (proprietary vendor documentation; not open source) | Confirming StorageGRID's `storagegrid_*` metric names. No text was copied from this documentation — see [LEGAL.md §3](LEGAL.md#3-no-proprietary-third-party-information) |
 
 ---

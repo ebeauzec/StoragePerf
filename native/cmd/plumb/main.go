@@ -1,11 +1,15 @@
 // Plumb — a self-contained storage performance console.
 //
 // This binary IS the whole application: it embeds the frontend, launches
-// the bundled Prometheus and VictoriaMetrics (and, when NetApp arrays are
-// configured, Harvest) as child processes, generates their config from
-// config/arrays.yml, evaluates config/thresholds/*.yml against what they
-// collect, and serves the result. Unzip the distribution for your OS and
-// run this executable — nothing else needs to be installed.
+// the bundled Prometheus and VictoriaMetrics as child processes, generates
+// their config from config/arrays.yml, evaluates config/thresholds/*.yml
+// against what they collect, and serves the result. Unzip the distribution
+// for your OS and run this executable — nothing else needs to be
+// installed. NetApp ONTAP/StorageGRID collection is done in-process (see
+// internal/netappnative) rather than via a separate collector — earlier
+// versions bundled NetApp's own Harvest as a sidecar, but Harvest only
+// ships linux/amd64 binaries, which meant no NetApp support at all on
+// Windows or macOS.
 package main
 
 import (
@@ -26,7 +30,7 @@ import (
 
 	"plumb/internal/api"
 	"plumb/internal/config"
-	"plumb/internal/harvest"
+	"plumb/internal/netappnative"
 	"plumb/internal/paths"
 	"plumb/internal/sidecar"
 	"plumb/internal/updates"
@@ -119,45 +123,6 @@ func (v *vmSupervisor) start(retentionPeriod string) {
 	go proc.Run(ctx)
 }
 
-// harvestSupervisor restarts the set of running Harvest poller processes
-// whenever the array inventory changes (NetApp arrays added/removed).
-type harvestSupervisor struct {
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	harvestBin string
-	harvestCfg string
-	logDir     string
-}
-
-func (h *harvestSupervisor) apply(pollers []harvest.Poller) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.cancel != nil {
-		h.cancel()
-	}
-	if len(pollers) == 0 {
-		h.cancel = nil
-		return
-	}
-	if _, err := os.Stat(h.harvestBin); err != nil {
-		log.Printf("[harvest] %d NetApp array(s) configured but harvest binary not found at %s — NetApp collection unavailable on this platform bundle", len(pollers), h.harvestBin)
-		h.cancel = nil
-		return
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	h.cancel = cancel
-	for _, p := range pollers {
-		proc := sidecar.Process{
-			Name:    "harvest:" + p.ArrayID,
-			Path:    h.harvestBin,
-			Args:    []string{"start", p.ArrayID, "--config", h.harvestCfg, "--foreground"},
-			LogFile: filepath.Join(h.logDir, "harvest-"+p.ArrayID+".log"),
-		}
-		go proc.Run(ctx)
-	}
-}
-
 func main() {
 	layout, err := paths.Resolve()
 	if err != nil {
@@ -175,7 +140,6 @@ func main() {
 	}
 
 	targetsPath := filepath.Join(layout.Data, "generated", "targets.json")
-	harvestCfgPath := filepath.Join(layout.Data, "generated", "harvest.yml")
 	promCfgPath := filepath.Join(layout.Data, "generated", "prometheus.yml")
 	vmURL := "http://127.0.0.1:" + vmPort
 
@@ -218,23 +182,21 @@ func main() {
 	}
 	go promProc.Run(ctx)
 
-	hs := &harvestSupervisor{harvestBin: layout.Harvest, harvestCfg: harvestCfgPath, logDir: filepath.Join(layout.Data, "logs")}
-
-	// --- initial config-derived generation (targets, harvest.yml, pollers) ---
+	// --- initial config-derived generation (Prometheus scrape targets) ---
 	updateChecker := updates.NewChecker(os.Getenv("PLUMB_CHECK_FOR_UPDATES") != "false")
 
 	app := &api.App{
-		Version:                  version,
-		ConfigDir:                layout.Config,
-		DataDir:                  layout.Data,
-		TargetsPath:              targetsPath,
-		HarvestPath:              harvestCfgPath,
-		SelfAddr:                 "127.0.0.1:" + listenPort,
-		VM:                       vm.New(vmURL),
-		Updates:                  updateChecker,
-		Frontend:                 webFS(),
-		RegenerateHarvestPollers: hs.apply,
-		RestartVM:                vmSup.start,
+		Version:     version,
+		ConfigDir:   layout.Config,
+		DataDir:     layout.Data,
+		TargetsPath: targetsPath,
+		SelfAddr:    "127.0.0.1:" + listenPort,
+		VM:          vm.New(vmURL),
+		Updates:     updateChecker,
+		Frontend:    webFS(),
+		RestartVM:   vmSup.start,
+		ONTAP:       netappnative.NewONTAPCollector(),
+		StorageGrid: netappnative.NewStorageGridCollector(),
 	}
 	if err := app.LoadSettings(); err != nil {
 		log.Fatalf("loading settings: %v", err)

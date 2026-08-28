@@ -6,10 +6,11 @@
 # this file). Not real hardware, not real data — see the module docstring
 # in exporter.py for exactly what it does and doesn't model.
 #
-# NetApp entries here use `host` directly (bypassing the bundled Harvest
-# poller) since the demo exporters aren't real ONTAP/StorageGRID systems for
-# Harvest to authenticate against — see internal/targets' comment for why
-# that's a real, supported mode and not just a demo trick.
+# NetApp entries here use `host` directly (bypassing the native
+# ONTAP/StorageGRID collector entirely) since the demo exporters aren't real
+# clusters/grids with a REST or Grid Management API to authenticate against
+# — see internal/targets' comment for why that's a real, supported mode and
+# not just a demo trick.
 
 arrays:
   - id: fa-prod-east-01

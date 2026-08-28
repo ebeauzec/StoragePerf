@@ -18,8 +18,8 @@ import (
 
 	"plumb/internal/config"
 	"plumb/internal/export"
-	"plumb/internal/harvest"
 	"plumb/internal/mockdata"
+	"plumb/internal/netappnative"
 	"plumb/internal/report"
 	"plumb/internal/rules"
 	"plumb/internal/scrapeproxy"
@@ -29,17 +29,17 @@ import (
 )
 
 type App struct {
-	Version                  string // set via -ldflags at build time — see cmd/plumb/main.go
-	ConfigDir                string
-	DataDir                  string // base data/ dir — used to size up the VictoriaMetrics storage subdir for the Config tab
-	TargetsPath              string
-	HarvestPath              string
-	SelfAddr                 string
-	VM                       *vm.Client
-	Updates                  *updates.Checker
-	Frontend                 fs.FS
-	RegenerateHarvestPollers func([]harvest.Poller)       // notifies main to restart Harvest pollers after config changes
-	RestartVM                func(retentionPeriod string) // notifies main to restart VictoriaMetrics with a new -retentionPeriod
+	Version     string // set via -ldflags at build time — see cmd/plumb/main.go
+	ConfigDir   string
+	DataDir     string // base data/ dir — used to size up the VictoriaMetrics storage subdir for the Config tab
+	TargetsPath string
+	SelfAddr    string
+	VM          *vm.Client
+	Updates     *updates.Checker
+	Frontend    fs.FS
+	RestartVM   func(retentionPeriod string) // notifies main to restart VictoriaMetrics with a new -retentionPeriod
+	ONTAP       *netappnative.ONTAPCollector
+	StorageGrid *netappnative.StorageGridCollector
 
 	settingsMu sync.RWMutex
 	mockData   bool
@@ -100,17 +100,42 @@ func (a *App) regenerate() error {
 	if err != nil {
 		return err
 	}
-	pollers, err := harvest.Generate(a.HarvestPath, arrays)
-	if err != nil {
+	if _, err := targets.Generate(a.TargetsPath, arrays, a.SelfAddr); err != nil {
 		return err
-	}
-	if _, err := targets.Generate(a.TargetsPath, arrays, pollers, a.SelfAddr); err != nil {
-		return err
-	}
-	if a.RegenerateHarvestPollers != nil {
-		a.RegenerateHarvestPollers(pollers)
 	}
 	return nil
+}
+
+// handleScrapeNetApp is Prometheus's actual scrape target for any NetApp
+// array configured with credentials (ManagementLIF set) — see
+// internal/targets. It collects directly from the array on every scrape
+// (no separate poller process, no cached state file) and formats the
+// result as a Prometheus exposition-format response, exactly like
+// scrapeproxy.Handler does for Pure arrays.
+func (a *App) handleScrapeNetApp(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	arr, ok, err := config.GetArray(a.ConfigDir, id)
+	if err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	if !ok {
+		httpError(w, 404, fmt.Errorf("unknown array %q", id))
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	switch arr.Vendor {
+	case config.VendorNetAppONTAP:
+		if err := a.ONTAP.WriteMetrics(w, arr); err != nil {
+			httpError(w, 502, err)
+		}
+	case config.VendorNetAppStorageGRID:
+		if err := a.StorageGrid.WriteMetrics(w, arr); err != nil {
+			httpError(w, 502, err)
+		}
+	default:
+		httpError(w, 400, fmt.Errorf("array %q is not a NetApp vendor", id))
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -570,6 +595,7 @@ func (a *App) handleFleetReport(w http.ResponseWriter, r *http.Request) {
 func (a *App) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /scrape/{id}", scrapeproxy.Handler(a.ConfigDir))
+	mux.HandleFunc("GET /scrape/netapp/{id}", a.handleScrapeNetApp)
 	mux.HandleFunc("GET /api/fleet", a.handleFleet)
 	mux.HandleFunc("GET /api/arrays/{id}", a.handleArrayDetail)
 	mux.HandleFunc("GET /api/config/arrays", a.handleGetArraysConfig)

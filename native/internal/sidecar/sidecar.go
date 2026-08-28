@@ -1,9 +1,8 @@
-// Package sidecar launches and supervises the bundled Prometheus,
-// VictoriaMetrics, and (when NetApp arrays are configured) Harvest binaries
-// as child processes of the main Plumb executable — no system service
-// installation, no Docker. If a sidecar dies, it's restarted with backoff;
-// its stdout/stderr are captured to a log file under data/logs/ so a crash
-// is diagnosable without a terminal attached.
+// Package sidecar launches and supervises the bundled Prometheus and
+// VictoriaMetrics binaries as child processes of the main Plumb executable
+// — no system service installation, no Docker. If a sidecar dies, it's
+// restarted with backoff; its stdout/stderr are captured to a log file
+// under data/logs/ so a crash is diagnosable without a terminal attached.
 package sidecar
 
 import (
@@ -17,9 +16,9 @@ import (
 )
 
 type Process struct {
-	Name string
-	Path string
-	Args []string
+	Name    string
+	Path    string
+	Args    []string
 	LogFile string
 }
 

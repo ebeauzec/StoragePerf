@@ -50,8 +50,8 @@ isn't one vendor.
 | **No cross-vendor bottleneck logic** — a wall of panels doesn't tell you *where* a problem originates, per vendor or across vendors | **A correlation finding, built once, applied to every vendor** — "front-end degraded, back-end clean" fires the same way whether the back-end evidence is Pure's capacity/replication signals or NetApp's direct controller-busy% (see [Metrics Reference §8](docs/METRICS-REFERENCE.md#8-what-each-vendor-cannot-tell-you) for exactly how that confidence differs by vendor) |
 | **Grafana retains what its backing TSDB is configured to retain** — often days to weeks in a default setup | **Unlimited retention by default** — VictoriaMetrics configured for 100-year retention out of the box; Prometheus itself is just a 2-day buffer in front of it |
 | **No reporting layer** — Grafana renders a dashboard, it doesn't write you an analysis | **Two report types plus CSV export**, computed on demand from stored history, with a written (not LLM-generated — deterministic, reproducible) analysis per metric — see [Reports & Data Export](#7-reports--data-export) |
-| **Nothing tells you if your dashboard's underlying components are outdated** | **Check-and-notify version checking** — looks up newer Prometheus/VictoriaMetrics/Harvest releases once a day, shows what it finds, never auto-installs anything |
-| **Standing up Grafana + Prometheus + exporters per vendor means real infrastructure** | **One executable, zero install** — the native build embeds the frontend and launches Prometheus + VictoriaMetrics (and Harvest, where available) as child processes. Unzip, run, done — see [Getting Started](#4-getting-started) |
+| **Nothing tells you if your dashboard's underlying components are outdated** | **Check-and-notify version checking** — looks up newer Prometheus/VictoriaMetrics releases once a day, shows what it finds, never auto-installs anything |
+| **Standing up Grafana + Prometheus + exporters per vendor means real infrastructure** | **One executable, zero install** — the native build embeds the frontend and launches Prometheus + VictoriaMetrics as child processes, and collects from NetApp systems directly, in-process. Unzip, run, done — see [Getting Started](#4-getting-started) |
 
 ---
 
@@ -159,8 +159,8 @@ separate Grafana stacks per vendor.
 1. Extract the platform's zero-install package (or use the Docker build)
 2. Add each system to `config/arrays.yml` with the right `vendor` field —
    see [arrays.example.yml](native/config/arrays.example.yml)
-3. NetApp systems need real credentials for the bundled Harvest poller;
-   Pure systems need an API token — see
+3. NetApp systems need real credentials for Plumb's own collector; Pure
+   systems need an API token — see
    [Getting Started §4](#4-getting-started)
 
 **Output:** A running fleet view with no separate infrastructure to
@@ -241,9 +241,10 @@ shown with its full written explanation — not just a color, a reason.
 
 The array inventory — add, edit, or remove systems per vendor, with
 vendor-appropriate fields shown automatically when you change the vendor
-dropdown. Saving regenerates Prometheus's scrape targets (and, for NetApp
-systems, Harvest's poller config) immediately, no restart required. Also
-shows the check-and-notify **Software & Reference Updates** panel.
+dropdown. Saving regenerates Prometheus's scrape targets immediately, no
+restart required. Also shows the check-and-notify **Software & Reference
+Updates** panel and the **Data Retention** controls (current database size,
+retention period).
 
 ---
 
@@ -309,12 +310,18 @@ Read both before tuning `config/thresholds/*.yml` for your own environment.
 |---|---|---|---|
 | Pure Storage FlashArray | `pure_flasharray` | Direct scrape via Plumb's authenticated proxy | All platforms |
 | Pure Storage FlashBlade | `pure_flashblade` | Direct scrape via Plumb's authenticated proxy | All platforms |
-| NetApp ONTAP | `netapp_ontap` | Bundled Harvest poller | **linux/amd64 only** — NetApp publishes no other platform's Harvest build |
-| NetApp StorageGRID | `netapp_storagegrid` | Bundled Harvest poller (`StorageGrid` collector) | **linux/amd64 only** |
+| NetApp ONTAP | `netapp_ontap` | Plumb's own in-process collector, calling the cluster's REST API directly | All platforms |
+| NetApp StorageGRID | `netapp_storagegrid` | Plumb's own in-process collector, running PromQL against the grid's own embedded Prometheus via the Grid Management API | All platforms |
 
-On other platforms, NetApp entries in `arrays.yml` are accepted but simply
-won't collect data — Plumb logs why and keeps running everything else
-normally.
+Earlier versions (through v0.6.1) collected NetApp systems via a bundled
+copy of NetApp's own Harvest — which only ever published linux/amd64
+binaries, so NetApp monitoring didn't work on Windows or macOS at all. It's
+been replaced with `internal/netappnative`, an independent collector
+written from Harvest's and NetApp's own published source and documentation
+(see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), removing that
+platform dependency entirely. Two ONTAP metrics Harvest used to publish
+(`aggr_disk_busy`, `nic_utilization`) aren't produced by the new collector —
+see `internal/netappnative/ontap.go`'s package doc for exactly why.
 
 **Demo mode has two forms:**
 
@@ -326,22 +333,22 @@ normally.
   a demo, a screenshot, or just trying the interface before you have real
   systems to point at.
 - **`native/scripts/run-demo.sh`** — for testing the *real* collection
-  pipeline (Prometheus scraping, the scrape proxy, Harvest) end to end
-  against synthetic data instead of a live array. It launches seven
-  instances of [demo-exporter/exporter.py](demo-exporter/exporter.py) (real
-  Python processes emitting real Prometheus text) and points
-  `config/arrays.yml` at them. Use this when you're validating Plumb's
-  plumbing itself, not just its UI.
+  pipeline (Prometheus scraping, the scrape proxy) end to end against
+  synthetic data instead of a live array. It launches seven instances of
+  [demo-exporter/exporter.py](demo-exporter/exporter.py) (real Python
+  processes emitting real Prometheus text) and points `config/arrays.yml`
+  at them. Use this when you're validating Plumb's plumbing itself, not
+  just its UI.
 
 Both use the same seven-system, four-vendor fleet, one of each severity
 level, so the flagship "bottleneck is likely upstream" correlation finding
 (see [Performance Analysis §7](docs/PERFORMANCE-ANALYSIS.md#7-the-correlation-finding--how-plumb-decides-upstream-vs-internal))
 fires on the critical-profile systems in both. NetApp entries in
-`run-demo.sh`'s fleet use a direct `host` field rather than the bundled
-Harvest poller, since the demo exporters aren't real ONTAP/StorageGRID
-systems for Harvest to authenticate against — this is also a legitimate way
-to point Plumb at a Harvest/StorageGRID Prometheus endpoint you already run
-yourself, not just a demo trick (see `internal/targets`).
+`run-demo.sh`'s fleet use a direct `host` field rather than credentials,
+since the demo exporters aren't real ONTAP/StorageGRID systems with a REST
+or Grid Management API to authenticate against — this is also a legitimate
+way to point Plumb at a Prometheus endpoint you already run yourself, not
+just a demo trick (see `internal/targets`).
 
 ---
 
@@ -353,7 +360,7 @@ yourself, not just a demo trick (see `internal/targets`).
 | **Check-and-notify only** | The update checker (`internal/updates`) makes outbound calls solely to check for newer releases of bundled components — it never downloads, installs, or modifies anything, and can be fully disabled (`PLUMB_CHECK_FOR_UPDATES=false`) for an air-gapped deployment |
 | **Per-array credentials, isolated** | Pure API tokens and NetApp credentials are referenced by environment variable name in `arrays.yml`, never stored in it directly, and each array's credential is scoped to that array's own scrape/poller path |
 | **No AI in the data path** | Report narratives are generated by a deterministic, rule-based function (`internal/report`) — see [Reports & Data Export §5](docs/REPORTS.md#5-how-the-written-analysis-is-generated) — not an LLM call. Nothing about a system's live performance data is sent to any AI service |
-| **Read-only against monitored systems** | Plumb only ever issues `GET /metrics` (Pure) or read-only REST/RestPerf collection (Harvest, against NetApp systems) — it never writes to or executes commands against any monitored array, cluster, or grid |
+| **Read-only against monitored systems** | Plumb only ever issues `GET /metrics` (Pure) or read-only REST API / Grid Management API queries (NetApp) — it never writes to or executes commands against any monitored array, cluster, or grid |
 
 ---
 
@@ -363,7 +370,7 @@ yourself, not just a demo trick (see `internal/targets`).
 |---|---|---|
 | **Port 8000 already in use** | Another Plumb instance, or an unrelated process | Check `lsof -i :8000` (macOS/Linux) or `netstat -ano \| findstr :8000` (Windows); stop the conflicting process or wait for it to exit |
 | **No data / panels show "no data yet"** | Not enough history collected yet, or the scrape target is down | Check `data/logs/prometheus.log` for target health; new deployments need a few collection cycles before charts populate |
-| **NetApp system shows no data** | Harvest binary not bundled for this platform, or missing credentials | Check the startup log for `"harvest binary not found"` or `"NetApp array(s) configured but..."` — see [§9](#9-multi-vendor-support--demo-mode) for the platform matrix |
+| **NetApp system shows no data** | Missing/incorrect credentials, wrong account permissions on the cluster/grid, or the array/grid unreachable from Plumb's host | Check `data/logs/prometheus.log` for the `/scrape/netapp/{id}` target's status; a raw scrape (`curl http://localhost:8000/scrape/netapp/<id>`) shows the exact per-metric error as a comment line |
 | **Config tab shows blank/undefined fields** | Old cached frontend | Hard-refresh the browser (Ctrl+Shift+R / Cmd+Shift+R) |
 | **macOS blocks the binary ("unidentified developer")** | Gatekeeper, since the binary isn't code-signed | System Settings → Privacy & Security → Allow Anyway, then run `./start.sh` again |
 | **Findings feed is empty** | Genuinely good news — no metric crossed a threshold in the current window | Check a longer time range if you expected to see history |
@@ -385,8 +392,8 @@ Browser (native/web/*)
   ▼
 plumb (single Go binary)  ─── port 8000 ───►  Prometheus (child process)  ─── remote_write ───►  VictoriaMetrics (child process)
   │                                                    ▲
-  ├── /scrape/{id} — authenticated proxy to Pure arrays │  scrapes
-  └── Harvest poller(s) (child processes, linux/amd64) ─┘  (Pure via proxy target; NetApp via Harvest's own exposed port)
+  ├── /scrape/{id}        — authenticated proxy to Pure arrays          │  scrapes
+  └── /scrape/netapp/{id} — in-process collector (internal/netappnative)┘  (both are Prometheus scrape targets on Plumb's own port)
 ```
 
 ### Repository Layout
@@ -401,7 +408,7 @@ StoragePerf/
 │   │   ├── mockdata/              ← in-process synthetic fleet for the Config tab's mock-data toggle
 │   │   ├── report/                ← array/fleet report generation (html/template)
 │   │   ├── export/                 ← CSV export
-│   │   ├── harvest/                 ← Harvest poller config generation
+│   │   ├── netappnative/            ← in-process ONTAP/StorageGRID collector
 │   │   ├── targets/                  ← Prometheus file_sd generation
 │   │   ├── scrapeproxy/                ← Pure array authenticated proxy
 │   │   ├── vm/                          ← VictoriaMetrics query client
@@ -427,11 +434,11 @@ StoragePerf/
 ```
 1. main.go resolves paths relative to the running executable (paths.Resolve)
 2. Loads config/arrays.yml + config/thresholds/<vendor>.yml per array
-3. Generates Prometheus file_sd targets (internal/targets) and, for NetApp
-   arrays with real credentials, harvest.yml (internal/harvest)
-4. Launches Prometheus, VictoriaMetrics, and any needed Harvest pollers as
-   supervised child processes (internal/sidecar) — auto-restart with backoff
-   on crash, capped at 30s
+3. Generates Prometheus file_sd targets (internal/targets) — Pure arrays
+   point at /scrape/{id}, NetApp arrays with credentials point at
+   /scrape/netapp/{id}, both served by Plumb's own HTTP server
+4. Launches Prometheus and VictoriaMetrics as supervised child processes
+   (internal/sidecar) — auto-restart with backoff on crash, capped at 30s
 5. Frontend fetches /api/fleet, /api/arrays/{id}, /api/reports/*, /api/export/*
 6. internal/rules evaluates each array's thresholds against VictoriaMetrics
    (via internal/vm) on every request — no caching layer, no stale state
@@ -445,7 +452,7 @@ go build ./...                      # compile check
 go vet ./...                        # static analysis
 go run ./scripts/dev                # build + run current source, always replacing whatever was previously running
 
-./scripts/fetch-sidecars.sh         # download pinned Prometheus/VictoriaMetrics/Harvest releases
+./scripts/fetch-sidecars.sh         # download pinned Prometheus/VictoriaMetrics releases
 ./scripts/build-native.sh           # cross-compile + package all 5 platforms
 ./scripts/run-demo.sh               # multi-vendor demo fleet
 ```
@@ -497,13 +504,14 @@ respective owners, used solely for interoperability documentation.
 
 ### Third-Party Open-Source Components
 
-This Software bundles official, unmodified binary releases of **Prometheus**,
-**VictoriaMetrics**, and **NetApp Harvest** — all licensed Apache License
-2.0 — plus several permissively-licensed (Apache-2.0/MIT/BSD-3-Clause)
-libraries. None of these are covered by the proprietary terms above; each
-remains under its own original license, reproduced in full in this
-repository. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the
-complete, itemized list.
+This Software bundles official, unmodified binary releases of **Prometheus**
+and **VictoriaMetrics** — both licensed Apache License 2.0 — plus several
+permissively-licensed (Apache-2.0/MIT/BSD-3-Clause) libraries. None of these
+are covered by the proprietary terms above; each remains under its own
+original license, reproduced in full in this repository. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete, itemized
+list, including NetApp Harvest's published source, referenced (not
+bundled) when writing `internal/netappnative`.
 
 ### License Terms at a Glance
 

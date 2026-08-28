@@ -85,10 +85,13 @@ Specifically:
   sponsor, contributor, owner, or licensor of this Software.
 - **NetApp®, ONTAP®, StorageGRID®, and Active IQ®** are trademarks or
   registered trademarks of NetApp, Inc. NetApp Harvest is an open-source
-  project published by NetApp under the Apache License 2.0 (see
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)) — its use here as a bundled
-  component does not imply NetApp's endorsement, certification, or support of
-  this Software.
+  project published by NetApp under the Apache License 2.0; this Software's
+  independent ONTAP/StorageGRID collector was written by consulting Harvest's
+  publicly published source code and Grafana dashboard definitions to confirm
+  metric names and semantics (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md))
+  — Harvest's binary is not bundled with or executed by this Software. This
+  reference use does not imply NetApp's endorsement, certification, or
+  support of this Software.
 
 No customer names, customer-specific data, internal pricing, internal
 operational procedures, or confidential business information belonging to
@@ -133,11 +136,12 @@ The Software does not contain and was not built using any:
 
 This Software downloads, bundles, and/or depends on third-party open-source
 software to function — most significantly, official pre-built binary releases
-of **Prometheus**, **VictoriaMetrics**, and **NetApp Harvest**, each obtained
-directly from that project's own official release channel and used
-unmodified. None of the Author's proprietary license terms in
-[LICENSE](LICENSE) apply to these components — each remains governed
-exclusively by its own original license.
+of **Prometheus** and **VictoriaMetrics**, each obtained directly from that
+project's own official release channel and used unmodified. None of the
+Author's proprietary license terms in [LICENSE](LICENSE) apply to these
+components — each remains governed exclusively by its own original license.
+(NetApp Harvest is not bundled — see Section 2 above for how its published
+source was used purely as a reference, not as bundled code.)
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete,
 itemized list of every such component, its copyright holder, its license, and
