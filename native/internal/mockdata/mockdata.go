@@ -11,6 +11,7 @@
 package mockdata
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"time"
@@ -99,28 +100,49 @@ func hashSeed(s string) int64 {
 	return int64(h & 0x7fffffffffffffff)
 }
 
+// valueAt computes one point's value purely as a function of (seed,
+// absolute timestamp) — deliberately not of the point's position within
+// whatever loop is currently generating a series. An earlier version
+// walked a single seeded RNG once per generated point, which meant the
+// value at "index 5" was always the same regardless of what real time it
+// represented — so a 1H chart and a 24H chart, both built from ~60 points,
+// produced literally identical curves, just with different axis labels.
+// Keying everything off wall-clock time instead means:
+//   - the same timestamp always maps to the same value, however many
+//     different time-range requests happen to include it (the "current"
+//     reading is stable across 1H/24H/7D views taken moments apart)
+//   - different windows actually look different, because a 7D view
+//     samples a slow multi-day wave a 1H view never gets far enough into
+func valueAt(seed string, t time.Time, center, noise float64) float64 {
+	ts := float64(t.Unix())
+	phaseFast := float64(hashSeed(seed+"|fast")%1000) / 1000 * math.Pi * 2
+	phaseSlow := float64(hashSeed(seed+"|slow")%1000) / 1000 * math.Pi * 2
+
+	fast := math.Sin(ts/1200+phaseFast) * noise * 0.45  // ~20 min period — visible motion on 1H/24H views
+	slow := math.Sin(ts/129600+phaseSlow) * noise * 0.35 // ~36 hour period — gives 7D/30D/1Y views their own shape
+
+	jitterSeed := hashSeed(fmt.Sprintf("%s|%d", seed, int64(ts)))
+	jitter := (rand.New(rand.NewSource(jitterSeed)).Float64()*2 - 1) * noise * 0.4
+
+	v := center + fast + slow + jitter
+	if v < 0 {
+		v = 0
+	}
+	return v
+}
+
 // GenerateSeries produces a synthetic time series for one (array, metric)
-// pair: a stable center value (from profileFactor) plus a slow sine drift
-// and random jitter, so charts look alive rather than flat, while staying
-// seeded per array+metric so repeated requests within the same run don't
-// jump around incoherently. category is "frontend" or "backend" — see
-// profileFactor for why it matters.
+// pair: a stable center value (from profileFactor) plus the wave+jitter
+// from valueAt, so charts look alive rather than flat and actually vary
+// with the requested time window instead of repeating the same shape.
+// category is "frontend" or "backend" — see profileFactor for why it
+// matters.
 func GenerateSeries(seed, profile, category string, watch, critical float64, start, end time.Time, step time.Duration) []vm.Point {
 	center, noise := profileFactor(profile, category, watch, critical)
-	r := rand.New(rand.NewSource(hashSeed(seed)))
-	phase := r.Float64() * math.Pi * 2
 
 	var pts []vm.Point
-	i := 0.0
 	for t := start; !t.After(end); t = t.Add(step) {
-		wave := math.Sin(i/18+phase) * noise * 0.6
-		jitter := (r.Float64()*2 - 1) * noise * 0.5
-		value := center + wave + jitter
-		if value < 0 {
-			value = 0
-		}
-		pts = append(pts, vm.Point{Time: float64(t.Unix()), Value: value})
-		i++
+		pts = append(pts, vm.Point{Time: float64(t.Unix()), Value: valueAt(seed, t, center, noise)})
 	}
 	return pts
 }
