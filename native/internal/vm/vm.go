@@ -112,9 +112,9 @@ func (c *Client) RangeQuery(promql string, start, end time.Time, step time.Durat
 // raw data rather than an aggregated query result.
 func (c *Client) ExportRaw(matchSelector string, start, end time.Time) (io.ReadCloser, error) {
 	u := c.BaseURL + "/api/v1/export?" + url.Values{
-		"match": {matchSelector},
-		"start": {strconv.FormatInt(start.Unix(), 10)},
-		"end":   {strconv.FormatInt(end.Unix(), 10)},
+		"match[]": {matchSelector}, // the bracketed form, not "match" — same convention as Prometheus's federate/query APIs
+		"start":   {strconv.FormatInt(start.Unix(), 10)},
+		"end":     {strconv.FormatInt(end.Unix(), 10)},
 	}.Encode()
 	resp, err := c.HTTP.Get(u)
 	if err != nil {

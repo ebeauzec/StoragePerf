@@ -59,6 +59,15 @@ metrics:
     finding:
       watch: "Host-side latency is averaging {value:.1f}ms, above the {threshold:.1f}ms illustrative ceiling."
       critical: "Host-side latency is averaging {value:.1f}ms, well above the {threshold:.1f}ms illustrative ceiling — hosts will see this directly."
+    investigate:
+      - "Check the array's front-end port statistics for retries, CRC errors, or link resets on the affected FC/iSCSI ports."
+      - "Correlate the latency spike against host-side queue depth and multipath failover events in the same window."
+      - "Confirm host HBA/NIC firmware and driver versions, and check for recent SAN fabric or switch changes."
+      - "Compare read vs. write latency dimensions separately — a one-sided spike often points to a specific workload or replication target, not the array generally."
+    remediate:
+      - "If a specific host or LUN is disproportionately affected, review its queue depth and multipathing configuration first."
+      - "If errors/retries are found on a specific port, engage the SAN team to inspect the cable/SFP or switch port."
+      - "If latency is broad-based and back-end metrics are also degraded, escalate to Pure support with a support bundle covering this window."
 
   - id: host_queue_depth
     category: frontend
@@ -75,6 +84,14 @@ metrics:
     finding:
       watch: "Outstanding host I/O is averaging {value:.0f}, above the {threshold:.0f} illustrative ceiling."
       critical: "Outstanding host I/O is averaging {value:.0f} — hosts are likely queueing rather than the array being the limiter."
+    investigate:
+      - "Identify which hosts/volumes are driving the outstanding I/O using per-host or per-volume queue-depth data if available."
+      - "Check whether host-side queue-depth settings (HBA/driver) exceed the array's recommended per-target limits."
+      - "Look for a recent workload change (new application, backup window, batch job) coinciding with the increase."
+    remediate:
+      - "Tune host HBA/OS queue-depth settings down to Pure's documented per-target/per-LUN recommendations if they're set too aggressively."
+      - "Spread the offending workload across more volumes/paths if a single LUN is saturating a queue."
+      - "If queue depth is high but array-side latency and back-end metrics are clean, this is host- or application-driven — coordinate with the application owner rather than tuning the array."
 
   - id: network_errors
     category: frontend
@@ -95,6 +112,14 @@ metrics:
     finding:
       watch: "Network interface error rate is {value:.1f}/min, above the {threshold:.0f}/min illustrative ceiling — worth checking cabling/SFPs."
       critical: "Network interface error rate is {value:.1f}/min — this points to a marginal link, not array load."
+    investigate:
+      - "Identify the specific interface(s) contributing to the error count from the array's own port statistics."
+      - "Check the physical layer first: cable seating, SFP health/optical power, and switch-port error counters on the other end."
+      - "Review recent cabling, SFP, or switch firmware changes around the time errors started."
+    remediate:
+      - "Reseat or replace the affected cable/SFP and confirm the error rate drops to zero, not just below threshold."
+      - "If the switch-side port also shows errors, engage the network team to replace the port or move the connection."
+      - "Fail over to a redundant path while the faulty link is repaired, if multipathing is configured."
 
   - id: replication_lag
     category: backend
@@ -112,6 +137,14 @@ metrics:
     finding:
       watch: "Replication lag is averaging {value:.0f}s, above the {threshold:.0f}s illustrative target."
       critical: "Replication lag is averaging {value:.0f}s — recovery point objective is at risk if this persists."
+    investigate:
+      - "Check the WAN/replication link's throughput and utilization between source and target arrays for the same window."
+      - "Confirm the target array's own health and capacity — a slow or full target array causes lag on every source relationship."
+      - "Review the write change rate on the source during the lag window — a burst of writes can outpace steady-state replication bandwidth."
+    remediate:
+      - "If the replication link itself is saturated, increase bandwidth or schedule heavy replication-driving workloads outside peak hours."
+      - "If the target array is the bottleneck, address its performance/capacity directly — treat it as its own array in this dashboard."
+      - "Review Pure's recommended replication link sizing for your write change rate and adjust if consistently undersized."
 
   - id: pool_saturation
     category: backend
@@ -127,3 +160,11 @@ metrics:
     finding:
       watch: "Capacity utilization is at {value:.0f}%, above the {threshold:.0f}% illustrative guidance."
       critical: "Capacity utilization is at {value:.0f}% — capacity, not just performance, is now a near-term risk."
+    investigate:
+      - "Break down capacity usage by volume/pod to identify what's driving growth."
+      - "Check the array's own data-reduction ratio for any recent regression (e.g. a new, less-compressible workload)."
+      - "Review snapshot retention policies — accumulated snapshots are a common silent capacity driver."
+    remediate:
+      - "Reclaim space via expired-snapshot cleanup or reduced retention if snapshots are the driver."
+      - "Plan a capacity expansion (additional shelf/array) if growth is workload-driven and expected to continue."
+      - "Migrate or archive cold data off the array if a specific dataset is responsible for the growth."

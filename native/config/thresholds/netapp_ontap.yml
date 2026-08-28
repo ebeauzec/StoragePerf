@@ -37,6 +37,14 @@ metrics:
     finding:
       watch: "Average volume latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance."
       critical: "Average volume latency is {value:.1f}ms — NetApp's own guidance treats sustained latency in this range as workload-impacting for most applications."
+    investigate:
+      - "Identify which volume(s) are driving the average using Harvest's per-volume latency breakdown."
+      - "Check whether the affected volume(s) share an aggregate with a workload showing high disk or CPU busy (see the back-end panels)."
+      - "Review QoS policy groups for the affected volumes — a throughput/IOPS ceiling can present as latency."
+    remediate:
+      - "If a specific volume is responsible, review or adjust its QoS policy group limits."
+      - "If the underlying aggregate's disks or the node's CPU are also elevated, address that back-end resource rather than the volume in isolation."
+      - "Consider moving the volume to a less-contended aggregate or node if the imbalance persists."
 
   - id: nic_utilization
     category: frontend
@@ -50,6 +58,14 @@ metrics:
     finding:
       watch: "A network port is at {value:.0f}% utilization, above the 75% guidance that preserves headroom for failover."
       critical: "A network port is at {value:.0f}% utilization — a failover event would likely saturate the remaining path."
+    investigate:
+      - "Identify which physical port is at high utilization and which LIFs/workloads are bound to it."
+      - "Check whether traffic is evenly distributed across available ports (ifgrp/LACP) or concentrated on one link."
+      - "Confirm current failover capacity — what utilization would result if a partner port failed over onto this one."
+    remediate:
+      - "Rebalance LIFs across available physical ports if traffic is unevenly distributed."
+      - "Add additional network ports/interface group members if the cluster has outgrown current bandwidth."
+      - "Schedule any planned failover testing for a low-traffic window until headroom is restored."
 
   - id: nic_errors
     category: frontend
@@ -63,6 +79,14 @@ metrics:
     finding:
       watch: "NIC CRC error rate is {value:.1f}/min, above the 5/min reference — check the cable/SFP."
       critical: "NIC CRC error rate is {value:.1f}/min — points to a marginal link, not cluster load."
+    investigate:
+      - "Identify the specific port from Harvest's per-port error breakdown."
+      - "Check the physical layer: cable, SFP, and the switch port's own error counters."
+      - "Review recent cabling, SFP, or switch-side changes."
+    remediate:
+      - "Reseat or replace the cable/SFP on the affected port."
+      - "Engage the network team if the switch-side port also reports errors."
+      - "Fail the LIF over to a healthy port while the link is repaired."
 
   - id: node_cpu_busy
     category: backend
@@ -76,6 +100,14 @@ metrics:
     finding:
       watch: "Node CPU busy is averaging {value:.0f}%, above the 70% sustained guidance."
       critical: "Node CPU busy is averaging {value:.0f}% — the controller itself is now a contributing factor, not just the path to it."
+    investigate:
+      - "Check which processes/workloads are consuming CPU via Harvest's node/CPU-domain breakdown, if enabled."
+      - "Correlate against recent workload changes: new volumes, increased snapshot schedules, or deduplication/compression jobs."
+      - "Check whether both nodes in an HA pair are elevated, or only one (possible uneven workload distribution)."
+    remediate:
+      - "Rebalance volumes/workloads across nodes in the HA pair if one node is consistently hotter."
+      - "Reschedule CPU-intensive background jobs (dedup, compression scans) to off-peak hours."
+      - "If sustained cluster-wide, this is a capacity signal — plan a controller upgrade or additional node."
 
   - id: aggr_disk_busy
     category: backend
@@ -89,6 +121,14 @@ metrics:
     finding:
       watch: "Aggregate disk busy is averaging {value:.0f}%, above the 70% guidance."
       critical: "Aggregate disk busy is averaging {value:.0f}% — the backing disks are the likely bottleneck, not the network path."
+    investigate:
+      - "Identify which aggregate and which volumes on it are driving disk activity."
+      - "Check the aggregate's RAID group health — a degraded/rebuilding RAID group significantly raises disk busy."
+      - "Review recent growth in random I/O workloads, which stress disk busy more than sequential ones."
+    remediate:
+      - "If a RAID group is degraded, prioritize replacing the failed disk to complete reconstruction."
+      - "Rebalance volumes to a less-busy aggregate if available."
+      - "Plan additional disks/shelves for the aggregate if this is sustained capacity-driven contention."
 
   - id: snapmirror_lag
     category: backend
@@ -102,6 +142,14 @@ metrics:
     finding:
       watch: "SnapMirror lag is {value:.0f}s, above the 90s target."
       critical: "SnapMirror lag is {value:.0f}s — recovery point objective is at risk if this persists."
+    investigate:
+      - "Check the replication network path's throughput/utilization between source and destination."
+      - "Confirm the destination cluster's own health — a slow or busy destination causes lag on every incoming relationship."
+      - "Review the source volume's change rate for a recent spike (bulk data load, migration)."
+    remediate:
+      - "Increase replication network bandwidth or schedule heavy write workloads outside the replication window."
+      - "Address destination cluster performance directly if it's the limiting factor."
+      - "Review SnapMirror policy/schedule — more frequent, smaller transfers may keep lag lower than large infrequent ones."
 
   - id: aggr_capacity
     category: backend
@@ -115,3 +163,11 @@ metrics:
     finding:
       watch: "Aggregate capacity is at {value:.0f}%, above the 80% guidance — reduction efficiency or growth should be reviewed."
       critical: "Aggregate capacity is at {value:.0f}% — ONTAP's own performance degrades as aggregates approach full, on top of the capacity risk."
+    investigate:
+      - "Break down aggregate usage by volume to identify what's driving growth."
+      - "Check volume-level snapshot reserve and retention — accumulated snapshots are a common silent driver."
+      - "Review storage-efficiency (dedup/compression) savings for any recent regression."
+    remediate:
+      - "Reclaim space via snapshot cleanup or reduced retention where safe."
+      - "Move or archive cold volumes to a less-utilized aggregate or tier."
+      - "Plan a capacity expansion if growth is workload-driven and ongoing — ONTAP performance also degrades as aggregates fill."

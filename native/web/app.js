@@ -152,16 +152,57 @@ function panelHtml(p, systemLabel) {
   </div>`;
 }
 
-function findingHtml(f) {
-  return `<div class="finding sev-${f.severity}">
+function findingHtml(f, idx) {
+  const investigate = f.investigate || [];
+  const remediate = f.remediate || [];
+  const hasDetail = investigate.length > 0 || remediate.length > 0;
+  return `<div class="finding sev-${f.severity} ${hasDetail ? "has-detail" : ""}" data-idx="${idx}" ${hasDetail ? 'tabindex="0" role="button" aria-expanded="false"' : ""}>
     <div class="finding-top">
       <span class="finding-sev">${f.severity}</span>
       <span class="finding-tag tag-${f.tag}">${f.tag === "fe" || f.tag === "frontend" ? "Front-End" : f.tag === "be" || f.tag === "backend" ? "Back-End" : "Fleet-wide"}</span>
     </div>
-    <div class="finding-title">${f.title}</div>
+    <div class="finding-title">${f.title}${hasDetail ? '<span class="finding-chevron">▾</span>' : ""}</div>
     <div class="finding-body">${f.body}</div>
     <div class="finding-ref">${f.ref}</div>
+    ${
+      hasDetail
+        ? `<div class="finding-detail"><div class="finding-detail-inner">
+      ${
+        investigate.length
+          ? `<div class="finding-detail-section">
+        <div class="finding-detail-heading">How to investigate</div>
+        <ol>${investigate.map((s) => `<li>${s}</li>`).join("")}</ol>
+      </div>`
+          : ""
+      }
+      ${
+        remediate.length
+          ? `<div class="finding-detail-section">
+        <div class="finding-detail-heading">Recommended remediation</div>
+        <ul>${remediate.map((s) => `<li>${s}</li>`).join("")}</ul>
+      </div>`
+          : ""
+      }
+    </div></div>`
+        : ""
+    }
   </div>`;
+}
+
+function bindFindingToggles() {
+  document.querySelectorAll("#findings .finding.has-detail").forEach((el) => {
+    const toggle = () => {
+      const expanded = el.classList.toggle("expanded");
+      el.setAttribute("aria-expanded", expanded ? "true" : "false");
+    };
+    el.addEventListener("click", toggle);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggle();
+      }
+    });
+  });
 }
 
 async function renderFleetView() {
@@ -195,8 +236,10 @@ async function renderFleetView() {
   const systemLabel = array ? `${array.name} · ${array.model}` : state.selectedId;
   document.getElementById("fe-panels").innerHTML = fe.map((p) => panelHtml(p, systemLabel)).join("") || '<div class="empty-note">No front-end metrics configured.</div>';
   document.getElementById("be-panels").innerHTML = be.map((p) => panelHtml(p, systemLabel)).join("") || '<div class="empty-note">No back-end metrics configured.</div>';
-  document.getElementById("findings").innerHTML =
-    findings.length ? findings.map(findingHtml).join("") : '<div class="empty-note">No best-practice findings for this array in the current window — everything is inside range.</div>';
+  document.getElementById("findings").innerHTML = findings.length
+    ? findings.map((f, i) => findingHtml(f, i)).join("")
+    : '<div class="empty-note">No best-practice findings for this array in the current window — everything is inside range.</div>';
+  bindFindingToggles();
 }
 
 /* ---------------- config view ---------------- */

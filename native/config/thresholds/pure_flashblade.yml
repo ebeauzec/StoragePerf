@@ -32,6 +32,14 @@ metrics:
     finding:
       watch: "Average bucket latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative ceiling."
       critical: "Average bucket latency is {value:.1f}ms, well above the {threshold:.0f}ms illustrative ceiling — clients will see this directly."
+    investigate:
+      - "Identify which bucket(s)/client(s) are driving the latency using per-bucket performance data."
+      - "Check for a change in object-size profile or request pattern (e.g. many small objects vs. large sequential) around the time latency increased."
+      - "Confirm client-side network path health (errors, retransmits) between the affected clients and the blade."
+    remediate:
+      - "If a specific bucket/workload is responsible, consider isolating it (dedicated bucket policy, or a separate FlashBlade if usage grows) rather than tuning the whole array."
+      - "Engage the network team if client-side network errors correlate with the latency."
+      - "If latency is broad and sustained, capture a support bundle and engage Pure support."
 
   - id: bucket_throughput
     category: backend
@@ -45,3 +53,11 @@ metrics:
     finding:
       watch: "Aggregate bucket throughput is {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
       critical: "Aggregate bucket throughput is {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "Since this threshold is a placeholder, first confirm whether the observed value is actually unusual relative to this array's own historical baseline (use the 7D/30D view)."
+      - "Identify which buckets are contributing most to the aggregate throughput."
+      - "Check whether this coincides with a scheduled batch job, backup, or data migration."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
+      - "If throughput is workload-driven and expected, no remediation is needed beyond confirming the array has headroom for it."
+      - "If unplanned, identify and, if necessary, throttle or reschedule the responsible workload."

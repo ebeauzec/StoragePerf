@@ -6,6 +6,7 @@
 /native/data/
 /native/.demo-venv/
 /native/config/arrays.yml
+/native/config/settings.yml
 
 # Local runtime state
 data/

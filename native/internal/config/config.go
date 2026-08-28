@@ -106,6 +106,8 @@ type MetricDef struct {
 	SeverityCritical float64           `yaml:"severity_critical"`
 	ThresholdLabel   string            `yaml:"threshold_label"`
 	Finding          map[string]string `yaml:"finding"`
+	Investigate      []string          `yaml:"investigate"`
+	Remediate        []string          `yaml:"remediate"`
 }
 
 type thresholdsFile struct {

@@ -28,6 +28,14 @@ metrics:
     finding:
       watch: "Metadata query latency is averaging {value:.0f}ms, above the 50ms illustrative guidance — client-facing S3/Swift requests will feel this."
       critical: "Metadata query latency is averaging {value:.0f}ms — this directly slows every object operation on this node."
+    investigate:
+      - "Check this node's Cassandra/metadata service health and compaction activity — metadata latency often traces back there."
+      - "Confirm this node's CPU utilization (see the back-end panel) — a busy node commonly shows up first as metadata latency."
+      - "Check whether the latency is isolated to one node or grid-wide, using the Grid Manager's per-node metrics."
+    remediate:
+      - "If isolated to one node, investigate that node's local resource pressure (CPU, disk I/O) directly."
+      - "If grid-wide, review recent ingest-volume growth against the grid's provisioned metadata capacity."
+      - "Engage NetApp support with a case if metadata service errors are also present in the node's logs."
 
   - id: s3_error_rate
     category: frontend
@@ -41,6 +49,14 @@ metrics:
     finding:
       watch: "S3 operations are failing at {value:.0f}/min — check client error codes (4xx vs 5xx) to narrow down auth vs. server-side causes."
       critical: "S3 operations are failing at {value:.0f}/min — this is client-visible and worth immediate attention."
+    investigate:
+      - "Break down failures by HTTP status code (4xx vs. 5xx) — 4xx points to client/auth issues, 5xx to the grid itself."
+      - "Check whether failures are concentrated on specific buckets, tenants, or client IPs."
+      - "Correlate against node CPU and metadata query latency for the same window (see back-end/front-end panels)."
+    remediate:
+      - "For 4xx-dominant failures, work with the affected client/tenant on credentials or request formatting — this isn't a grid-health issue."
+      - "For 5xx-dominant failures correlating with node load, address the underlying resource pressure on that node."
+      - "Escalate to NetApp support if 5xx errors persist with no clear resource cause."
 
   - id: network_errors
     category: frontend
@@ -54,6 +70,14 @@ metrics:
     finding:
       watch: "Network interface error rate is {value:.1f}/min — worth checking cabling/NIC health on this node."
       critical: "Network interface error rate is {value:.1f}/min — a marginal link is a plausible cause of client-visible slowness."
+    investigate:
+      - "Identify the specific node and interface from the underlying node_network_* labels."
+      - "Check the physical layer: cable, NIC, and the switch port's own error counters."
+      - "Review recent cabling, NIC, or switch-side changes on this node."
+    remediate:
+      - "Reseat or replace the cable/NIC on the affected interface."
+      - "Engage the network team if the switch-side port also reports errors."
+      - "Monitor client-facing error rates on this node while the link is repaired, since StorageGRID load balancing may route around it."
 
   - id: node_cpu
     category: backend
@@ -67,6 +91,14 @@ metrics:
     finding:
       watch: "Node CPU utilization is averaging {value:.0f}%, above the 70% sustained guidance."
       critical: "Node CPU utilization is averaging {value:.0f}% — the node itself is now a contributing factor to any client-facing slowness."
+    investigate:
+      - "Identify which service (LDR, ADC, CMN, metadata) is consuming CPU on this node, if per-service metrics are available."
+      - "Check for a recent increase in ingest rate, ILM policy complexity, or scan/verification jobs."
+      - "Compare against other nodes in the same site to see if load is unevenly distributed."
+    remediate:
+      - "Rebalance client/load-balancer traffic away from this node if others have more headroom."
+      - "Simplify or reschedule ILM policy evaluation if it's a major CPU contributor."
+      - "If sustained grid-wide, this is a capacity signal — plan additional storage nodes."
 
   - id: ilm_backlog
     category: backend
@@ -80,6 +112,14 @@ metrics:
     finding:
       watch: "{value:.0f} objects are awaiting ILM evaluation — a growing backlog here is an early signal of a node falling behind, before it shows up as client latency."
       critical: "{value:.0f} objects are awaiting ILM evaluation — this node is materially behind on lifecycle management, which risks both performance and policy compliance (replication/erasure-coding placement)."
+    investigate:
+      - "Check whether the backlog is isolated to this node or grid-wide, and whether it correlates with recent ingest bursts."
+      - "Review ILM policy complexity — policies with many placement rules or evaluation criteria take longer per object."
+      - "Confirm this node's CPU and metadata latency aren't independently elevated and causing the backlog as a side effect."
+    remediate:
+      - "If ingest-burst driven and temporary, monitor — the backlog should drain once ingest returns to normal."
+      - "If policy-driven, simplify the ILM policy's evaluation logic where possible."
+      - "If node resource-constrained, address the underlying CPU/latency issue first; the backlog is usually a symptom, not the root cause."
 
   - id: storage_capacity
     category: backend
@@ -93,3 +133,11 @@ metrics:
     finding:
       watch: "Storage capacity is at {value:.0f}% used, above the 80% guidance."
       critical: "Storage capacity is at {value:.0f}% used — new object ingest is at risk on this node, not just performance."
+    investigate:
+      - "Break down usage by tenant/bucket to identify what's driving growth."
+      - "Check ILM policy placement — verify objects are being tiered/erasure-coded as intended rather than left in a more space-intensive state."
+      - "Review ingest-rate trend over the reporting window (7D/30D) to project time-to-full."
+    remediate:
+      - "Expand storage capacity (additional nodes/volumes) if growth is sustained and expected to continue."
+      - "Review and correct ILM policy if objects aren't reaching their intended, more space-efficient placement tier."
+      - "Engage the responsible tenant if a single tenant's growth is disproportionate."

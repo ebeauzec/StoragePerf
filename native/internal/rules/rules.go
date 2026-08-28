@@ -52,11 +52,13 @@ type Panel struct {
 }
 
 type Finding struct {
-	Severity Severity `json:"severity"`
-	Tag      string   `json:"tag"`
-	Title    string   `json:"title"`
-	Body     string   `json:"body"`
-	Ref      string   `json:"ref"`
+	Severity    Severity `json:"severity"`
+	Tag         string   `json:"tag"`
+	Title       string   `json:"title"`
+	Body        string   `json:"body"`
+	Ref         string   `json:"ref"`
+	Investigate []string `json:"investigate"`
+	Remediate   []string `json:"remediate"`
 }
 
 type Result struct {
@@ -185,8 +187,10 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 		}
 		findings = append(findings, Finding{
 			Severity: p.Severity, Tag: m.Category, Title: m.Label,
-			Body: formatTemplate(tmpl, *p.Value, threshold),
-			Ref:  fmt.Sprintf("%s · %s", arrayID, m.ID),
+			Body:        formatTemplate(tmpl, *p.Value, threshold),
+			Ref:         fmt.Sprintf("%s · %s", arrayID, m.ID),
+			Investigate: m.Investigate,
+			Remediate:   m.Remediate,
 		})
 	}
 
@@ -220,6 +224,18 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 			Body: "Front-end metrics are degraded while every back-end signal this vendor publishes is within range. " +
 				"That points to the network/fabric path as the likely cause rather than the array's internal components.",
 			Ref: fmt.Sprintf("%s · derived from front-end + back-end panels", arrayID),
+			Investigate: []string{
+				"Check switch/fabric port counters (CRC errors, discards, link resets) on the paths between hosts and this array over the same window.",
+				"Confirm host HBA/NIC driver and firmware versions, and multipath (MPIO) failover state — a path flapping in and out looks like latency at the array.",
+				"Compare front-end latency against SAN/network device queue depth, buffer-credit exhaustion (FC), or NIC ring-buffer drops (iSCSI/NFS), if your fabric monitoring exposes them.",
+				"Correlate the timing of the front-end degradation against any recent zoning, switch firmware, or network maintenance changes.",
+			},
+			Remediate: []string{
+				"Engage the network/SAN team first — this is very likely their path, not an array-side fix.",
+				"If a specific fabric link or interface is implicated, reseat/replace the SFP or cable and re-test.",
+				"Re-balance or fail back multipath sessions once the network layer is confirmed stable.",
+				"If no path issue is found, remember this vendor's public back-end metrics may not cover every internal component — don't rule the array out on back-end panels alone before engaging vendor support.",
+			},
 		}}, findings...)
 	}
 

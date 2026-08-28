@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -335,6 +336,49 @@ func (a *App) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleBackup streams a full, unaggregated JSON-lines export of everything
+// VictoriaMetrics has stored — not just the curated per-metric CSV export
+// above. This is a real backup: every raw sample, for every metric, for
+// every array, restorable into any Prometheus-compatible TSDB via its
+// /api/v1/import endpoint (VictoriaMetrics's own "logical backup" mechanism,
+// not something Plumb invents). Defaults to all recorded history; pass
+// ?start=<unix>&end=<unix> for a bounded export instead, and ?match=<promql
+// selector> to scope it to specific metrics rather than everything.
+//
+// This always reads from the real VictoriaMetrics instance regardless of
+// the Config tab's mock-data toggle — mock data is generated in-process and
+// never written to storage, so there's nothing there to back up while it's
+// on; this exports whatever real collection has actually happened.
+func (a *App) handleBackup(w http.ResponseWriter, r *http.Request) {
+	match := r.URL.Query().Get("match")
+	if match == "" {
+		match = `{__name__!=""}` // "every time series" — the standard PromQL idiom for it
+	}
+	start := time.Unix(0, 0)
+	end := time.Now()
+	if s := r.URL.Query().Get("start"); s != "" {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			start = time.Unix(v, 0)
+		}
+	}
+	if e := r.URL.Query().Get("end"); e != "" {
+		if v, err := strconv.ParseInt(e, 10, 64); err == nil {
+			end = time.Unix(v, 0)
+		}
+	}
+
+	body, err := a.VM.ExportRaw(match, start, end)
+	if err != nil {
+		httpError(w, 502, fmt.Errorf("backup export failed: %w", err))
+		return
+	}
+	defer body.Close()
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="plumb-backup-%s.jsonl"`, end.Format("20060102-1504")))
+	io.Copy(w, body)
+}
+
 func writeMockCSV(w http.ResponseWriter, arr mockdata.Array, metrics []config.MetricDef, start, end time.Time, step time.Duration) {
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
@@ -459,6 +503,7 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/version", a.handleVersion)
 	mux.HandleFunc("GET /api/updates", a.handleUpdates)
 	mux.HandleFunc("GET /api/export/{id}", a.handleExport)
+	mux.HandleFunc("GET /api/backup", a.handleBackup)
 	mux.HandleFunc("GET /api/reports/array/{id}", a.handleArrayReport)
 	mux.HandleFunc("GET /api/reports/fleet", a.handleFleetReport)
 	mux.Handle("/", http.FileServerFS(a.Frontend))
