@@ -104,6 +104,10 @@ async function loadFleet() {
   document.querySelectorAll(".fleet-card").forEach((el) =>
     el.addEventListener("click", () => {
       state.selectedId = el.dataset.id;
+      // renderFleetView() only redraws the panels/findings below, not this
+      // strip — toggle the highlight here directly so it's instant instead
+      // of waiting for the next 15s tick() to redraw the whole strip
+      document.querySelectorAll(".fleet-card").forEach((c) => c.classList.toggle("selected", c === el));
       renderFleetView();
     })
   );
@@ -128,13 +132,14 @@ function renderRangePills() {
 }
 
 /* ---------------- panels + findings for selected array ---------------- */
-function panelHtml(p) {
+function panelHtml(p, systemLabel) {
   const color = p.category === "frontend" ? "#45d0c4" : "#7c8fef";
   const badgeClass = p.severity === "critical" ? "badge-critical" : p.severity === "watch" ? "badge-watch" : "badge-good";
   return `<div class="panel">
     <div class="panel-top">
       <div>
         <div class="panel-label">${p.label}</div>
+        ${systemLabel ? `<div class="panel-system">${systemLabel}</div>` : ""}
         <div class="panel-value-row"><span class="panel-value">${fmt(p.value, p.unit === "%" || p.unit.includes("errors") || p.unit.includes("per port") ? 0 : 2)}</span><span class="panel-unit">${p.unit}</span></div>
       </div>
       <span class="panel-badge ${badgeClass}">${p.severity}</span>
@@ -185,8 +190,11 @@ async function renderFleetView() {
   const findings = detail.findings || [];
   const fe = panels.filter((p) => p.category === "frontend");
   const be = panels.filter((p) => p.category === "backend");
-  document.getElementById("fe-panels").innerHTML = fe.map(panelHtml).join("") || '<div class="empty-note">No front-end metrics configured.</div>';
-  document.getElementById("be-panels").innerHTML = be.map(panelHtml).join("") || '<div class="empty-note">No back-end metrics configured.</div>';
+  // bare `.map(panelHtml)` would pass Array.map's index as the 2nd arg
+  // (systemLabel) instead of this — has to be a wrapping arrow function
+  const systemLabel = array ? `${array.name} · ${array.model}` : state.selectedId;
+  document.getElementById("fe-panels").innerHTML = fe.map((p) => panelHtml(p, systemLabel)).join("") || '<div class="empty-note">No front-end metrics configured.</div>';
+  document.getElementById("be-panels").innerHTML = be.map((p) => panelHtml(p, systemLabel)).join("") || '<div class="empty-note">No back-end metrics configured.</div>';
   document.getElementById("findings").innerHTML =
     findings.length ? findings.map(findingHtml).join("") : '<div class="empty-note">No best-practice findings for this array in the current window — everything is inside range.</div>';
 }
