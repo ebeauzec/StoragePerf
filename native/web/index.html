@@ -45,7 +45,7 @@
     <div class="timebar">
       <div class="range-pills" id="range-pills"></div>
       <div class="retention-note" id="selected-array-note"></div>
-      <div class="retention-note">Retained history: <b>unlimited</b> (VictoriaMetrics) · 15s native resolution</div>
+      <div class="retention-note" id="retention-note">Retained history: <b>—</b> (VictoriaMetrics) · 15s native resolution</div>
       <div style="display:flex; gap:8px;">
         <a class="btn" id="array-report-link" href="#" target="_blank" rel="noopener">Report</a>
         <a class="btn" id="array-export-link" href="#" download>Export CSV</a>
@@ -91,6 +91,25 @@
         <input type="checkbox" id="mock-data-toggle">
         <span class="track"><span class="thumb"></span></span>
       </label>
+    </div>
+
+    <div class="section-head">
+      <div class="section-title">Data Retention</div>
+      <div class="section-note">Controls how long VictoriaMetrics keeps collected history</div>
+    </div>
+    <div class="config-card retention-card">
+      <div class="retention-stat">
+        <div class="toggle-title">Current database size</div>
+        <div class="retention-size" id="db-size-note">—</div>
+      </div>
+      <div class="retention-row">
+        <div class="toggle-row-text">
+          <div class="toggle-title">Retention period</div>
+          <div class="toggle-desc">Data older than this is automatically and permanently deleted. Shortening it purges existing history outside the new window immediately — it is not archived first. Use Export CSV or the full backup endpoint to keep a copy of anything before shortening this.</div>
+        </div>
+        <select id="retention-select" class="retention-select"></select>
+      </div>
+      <div id="retention-status" class="section-note"></div>
     </div>
 
     <div class="section-head">

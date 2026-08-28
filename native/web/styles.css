@@ -194,6 +194,17 @@ a{color:inherit;}
 .config-field{display:flex; flex-direction:column;}
 .config-field.span-2{grid-column:span 2;}
 
+.retention-card{display:flex; flex-direction:column;}
+.retention-stat{padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--border-soft);}
+.retention-size{font-family:"IBM Plex Mono"; font-size:22px; font-weight:600; margin-top:4px;}
+.retention-row{display:flex; align-items:center; justify-content:space-between; gap:16px;}
+.retention-select{
+  background:var(--surface-raised); border:1px solid var(--border); color:var(--text);
+  border-radius:6px; padding:8px 10px; font-size:12.5px; font-family:"IBM Plex Mono"; flex:none; cursor:pointer;
+}
+.retention-select:focus{outline:1px solid var(--accent-fe-dim);}
+#retention-status:not(:empty){margin-top:10px;}
+
 .toggle-row{
   display:flex; align-items:center; justify-content:space-between; gap:16px;
   background:var(--surface); border:1px solid var(--border); border-radius:10px;

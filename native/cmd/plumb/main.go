@@ -69,14 +69,54 @@ func writePrometheusConfig(path, targetsPath, vmURL string) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
+// vmSupervisor (re)starts VictoriaMetrics with a given -retentionPeriod.
+// VictoriaMetrics only reads that flag at startup, so changing it at
+// runtime (via the Config tab) means restarting the process — the previous
+// instance is torn down first and a fresh one launched under a new
+// cancelable sub-context, mirroring harvestSupervisor below. Restarting
+// with a shorter retentionPeriod doesn't just stop accepting old data going
+// forward: VictoriaMetrics's own background retention enforcement then
+// purges everything already on disk that falls outside the new window.
+type vmSupervisor struct {
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	parentCtx  context.Context
+	path       string
+	dataPath   string
+	listenAddr string
+	logFile    string
+}
+
+func (v *vmSupervisor) start(retentionPeriod string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.cancel != nil {
+		v.cancel()
+	}
+	ctx, cancel := context.WithCancel(v.parentCtx)
+	v.cancel = cancel
+	proc := sidecar.Process{
+		Name: "victoriametrics",
+		Path: v.path,
+		Args: []string{
+			"--storageDataPath=" + v.dataPath,
+			"--retentionPeriod=" + retentionPeriod,
+			"--httpListenAddr=" + v.listenAddr,
+		},
+		LogFile: v.logFile,
+	}
+	log.Printf("[victoriametrics] starting with retention period %s", retentionPeriod)
+	go proc.Run(ctx)
+}
+
 // harvestSupervisor restarts the set of running Harvest poller processes
 // whenever the array inventory changes (NetApp arrays added/removed).
 type harvestSupervisor struct {
-	mu        sync.Mutex
-	cancel    context.CancelFunc
+	mu         sync.Mutex
+	cancel     context.CancelFunc
 	harvestBin string
 	harvestCfg string
-	logDir    string
+	logDir     string
 }
 
 func (h *harvestSupervisor) apply(pollers []harvest.Poller) {
@@ -136,18 +176,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// --- sidecars ---
-	vmProc := sidecar.Process{
-		Name: "victoriametrics",
-		Path: layout.VictoriaMetrics,
-		Args: []string{
-			"--storageDataPath=" + filepath.Join(layout.Data, "victoriametrics"),
-			"--retentionPeriod=100y",
-			"--httpListenAddr=127.0.0.1:" + vmPort,
-		},
-		LogFile: filepath.Join(layout.Data, "logs", "victoriametrics.log"),
+	// settings (retention period, mock-data toggle) are needed before the
+	// VictoriaMetrics sidecar starts, since -retentionPeriod is a startup
+	// flag — app.LoadSettings() re-reads the same file into the running
+	// App below, so this is just to get the initial value early
+	initialSettings, err := config.LoadSettings(layout.Config)
+	if err != nil {
+		log.Fatalf("loading settings: %v", err)
 	}
-	go vmProc.Run(ctx)
+
+	// --- sidecars ---
+	vmSup := &vmSupervisor{
+		parentCtx:  ctx,
+		path:       layout.VictoriaMetrics,
+		dataPath:   filepath.Join(layout.Data, "victoriametrics"),
+		listenAddr: "127.0.0.1:" + vmPort,
+		logFile:    filepath.Join(layout.Data, "logs", "victoriametrics.log"),
+	}
+	vmSup.start(initialSettings.EffectiveRetentionPeriod())
 
 	promProc := sidecar.Process{
 		Name: "prometheus",
@@ -170,6 +216,7 @@ func main() {
 	app := &api.App{
 		Version:                  version,
 		ConfigDir:                layout.Config,
+		DataDir:                  layout.Data,
 		TargetsPath:              targetsPath,
 		HarvestPath:              harvestCfgPath,
 		SelfAddr:                 "127.0.0.1:" + listenPort,
@@ -177,6 +224,7 @@ func main() {
 		Updates:                  updateChecker,
 		Frontend:                 webFS(),
 		RegenerateHarvestPollers: hs.apply,
+		RestartVM:                vmSup.start,
 	}
 	if err := app.LoadSettings(); err != nil {
 		log.Fatalf("loading settings: %v", err)

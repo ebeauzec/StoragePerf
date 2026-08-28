@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,43 +31,67 @@ import (
 type App struct {
 	Version                  string // set via -ldflags at build time — see cmd/plumb/main.go
 	ConfigDir                string
+	DataDir                  string // base data/ dir — used to size up the VictoriaMetrics storage subdir for the Config tab
 	TargetsPath              string
 	HarvestPath              string
 	SelfAddr                 string
 	VM                       *vm.Client
 	Updates                  *updates.Checker
 	Frontend                 fs.FS
-	RegenerateHarvestPollers func([]harvest.Poller) // notifies main to restart Harvest pollers after config changes
+	RegenerateHarvestPollers func([]harvest.Poller)       // notifies main to restart Harvest pollers after config changes
+	RestartVM                func(retentionPeriod string) // notifies main to restart VictoriaMetrics with a new -retentionPeriod
 
-	mockMu   sync.RWMutex
-	mockData bool
+	settingsMu sync.RWMutex
+	mockData   bool
+	retention  string
 }
 
-// LoadSettings reads the persisted mock-data toggle at startup.
+// LoadSettings reads the persisted mock-data toggle and retention period at
+// startup.
 func (a *App) LoadSettings() error {
 	s, err := config.LoadSettings(a.ConfigDir)
 	if err != nil {
 		return err
 	}
-	a.mockMu.Lock()
+	a.settingsMu.Lock()
 	a.mockData = s.MockData
-	a.mockMu.Unlock()
+	a.retention = s.EffectiveRetentionPeriod()
+	a.settingsMu.Unlock()
 	return nil
 }
 
 func (a *App) mockEnabled() bool {
-	a.mockMu.RLock()
-	defer a.mockMu.RUnlock()
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
 	return a.mockData
 }
 
-func (a *App) setMockEnabled(v bool) error {
-	if err := config.SaveSettings(a.ConfigDir, config.Settings{MockData: v}); err != nil {
+func (a *App) retentionPeriod() string {
+	a.settingsMu.RLock()
+	defer a.settingsMu.RUnlock()
+	if a.retention == "" {
+		return config.DefaultRetentionPeriod
+	}
+	return a.retention
+}
+
+// saveSettings persists both settings together (they live in the same
+// settings.yml) and, if the retention period actually changed, tells main
+// to restart VictoriaMetrics with the new -retentionPeriod so the change
+// (including any resulting purge of now-out-of-window data) takes effect —
+// VictoriaMetrics only reads that flag at startup.
+func (a *App) saveSettings(mockData bool, retention string) error {
+	if err := config.SaveSettings(a.ConfigDir, config.Settings{MockData: mockData, RetentionPeriod: retention}); err != nil {
 		return err
 	}
-	a.mockMu.Lock()
-	a.mockData = v
-	a.mockMu.Unlock()
+	a.settingsMu.Lock()
+	retentionChanged := retention != a.retention
+	a.mockData = mockData
+	a.retention = retention
+	a.settingsMu.Unlock()
+	if retentionChanged && a.RestartVM != nil {
+		a.RestartVM(retention)
+	}
 	return nil
 }
 
@@ -257,23 +282,56 @@ func (a *App) handlePutArraysConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"saved": len(payload.Arrays)})
 }
 
+// dirSize sums file sizes under path. Errors on individual entries are
+// swallowed rather than aborting the walk — VictoriaMetrics's background
+// merge/compaction can remove or replace part files while this runs, and a
+// disk-usage figure that's a moment stale beats a Config tab that fails to
+// load because of it.
+func dirSize(path string) int64 {
+	var size int64
+	filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if info, err := d.Info(); err == nil {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
+}
+
 func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]any{"mock_data": a.mockEnabled()})
+	options := make([]map[string]string, len(config.RetentionOptions))
+	for i, o := range config.RetentionOptions {
+		options[i] = map[string]string{"value": o.Value, "label": o.Label}
+	}
+	writeJSON(w, map[string]any{
+		"mock_data":         a.mockEnabled(),
+		"retention_period":  a.retentionPeriod(),
+		"retention_options": options,
+		"db_size_bytes":     dirSize(filepath.Join(a.DataDir, "victoriametrics")),
+	})
 }
 
 func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		MockData bool `json:"mock_data"`
+		MockData        bool   `json:"mock_data"`
+		RetentionPeriod string `json:"retention_period"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		httpError(w, 400, err)
 		return
 	}
-	if err := a.setMockEnabled(payload.MockData); err != nil {
+	if !config.ValidRetentionPeriod(payload.RetentionPeriod) {
+		httpError(w, 400, fmt.Errorf("invalid retention_period %q", payload.RetentionPeriod))
+		return
+	}
+	if err := a.saveSettings(payload.MockData, payload.RetentionPeriod); err != nil {
 		httpError(w, 500, err)
 		return
 	}
-	writeJSON(w, map[string]any{"mock_data": payload.MockData})
+	writeJSON(w, map[string]any{"mock_data": payload.MockData, "retention_period": payload.RetentionPeriod})
 }
 
 func (a *App) handleVersion(w http.ResponseWriter, r *http.Request) {

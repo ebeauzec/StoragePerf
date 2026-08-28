@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	VendorPureFlashArray   = "pure_flasharray"
-	VendorPureFlashBlade   = "pure_flashblade"
-	VendorNetAppONTAP      = "netapp_ontap"
+	VendorPureFlashArray    = "pure_flasharray"
+	VendorPureFlashBlade    = "pure_flashblade"
+	VendorNetAppONTAP       = "netapp_ontap"
 	VendorNetAppStorageGRID = "netapp_storagegrid"
 )
 
@@ -122,7 +122,46 @@ func thresholdsFileName(vendor string) string {
 // Settings holds small UI-toggleable app settings, persisted separately
 // from arrays.yml since they're operational preferences, not inventory.
 type Settings struct {
-	MockData bool `yaml:"mock_data"`
+	MockData        bool   `yaml:"mock_data"`
+	RetentionPeriod string `yaml:"retention_period,omitempty"`
+}
+
+// DefaultRetentionPeriod matches VictoriaMetrics's own default of keeping
+// everything — a fresh settings.yml (or one predating this field) should
+// behave exactly as Plumb always has, not suddenly start purging data.
+const DefaultRetentionPeriod = "100y"
+
+// RetentionOptions is the whitelist of values the Config tab's retention
+// dropdown offers and the API accepts — VictoriaMetrics's -retentionPeriod
+// flag feeds a child-process argv, so this is validated against an exact
+// set rather than a free-form duration parser.
+var RetentionOptions = []struct{ Value, Label string }{
+	{"1w", "1 week"},
+	{"1M", "1 month"},
+	{"3M", "3 months"},
+	{"6M", "6 months"},
+	{"1y", "1 year"},
+	{"2y", "2 years"},
+	{"5y", "5 years"},
+	{DefaultRetentionPeriod, "Unlimited"},
+}
+
+func ValidRetentionPeriod(v string) bool {
+	for _, o := range RetentionOptions {
+		if o.Value == v {
+			return true
+		}
+	}
+	return false
+}
+
+// EffectiveRetentionPeriod returns the configured period, or the default if
+// unset (a zero-value Settings{} from a missing settings.yml).
+func (s Settings) EffectiveRetentionPeriod() string {
+	if s.RetentionPeriod == "" {
+		return DefaultRetentionPeriod
+	}
+	return s.RetentionPeriod
 }
 
 func settingsPath(configDir string) string { return filepath.Join(configDir, "settings.yml") }

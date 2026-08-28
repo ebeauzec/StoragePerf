@@ -39,15 +39,15 @@ func Classify(value float64, ok bool, watch, critical float64) Severity {
 }
 
 type Panel struct {
-	ID             string      `json:"id"`
-	Label          string      `json:"label"`
-	Unit           string      `json:"unit"`
-	Category       string      `json:"category"`
-	Value          *float64    `json:"value"`
-	Severity       Severity    `json:"severity"`
-	ThresholdLabel string      `json:"threshold_label"`
-	Watch          float64     `json:"watch"`
-	Critical       float64     `json:"critical"`
+	ID             string       `json:"id"`
+	Label          string       `json:"label"`
+	Unit           string       `json:"unit"`
+	Category       string       `json:"category"`
+	Value          *float64     `json:"value"`
+	Severity       Severity     `json:"severity"`
+	ThresholdLabel string       `json:"threshold_label"`
+	Watch          float64      `json:"watch"`
+	Critical       float64      `json:"critical"`
 	Series         [][2]float64 `json:"series"`
 }
 
@@ -256,17 +256,17 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 // Stats summarizes one metric's series over a report period — the basis
 // for the "comprehensive analysis at every level" report requirement.
 type Stats struct {
-	MetricID        string
-	Label           string
-	Unit            string
-	Category        string
-	Min, Avg, Max   float64
-	P95             float64
-	WatchPct        float64 // fraction of samples at/above watch
-	CriticalPct     float64
-	TrendPct        float64 // % change, first quarter avg -> last quarter avg
-	ThresholdLabel  string
-	SampleCount     int
+	MetricID       string
+	Label          string
+	Unit           string
+	Category       string
+	Min, Avg, Max  float64
+	P95            float64
+	WatchPct       float64 // fraction of samples at/above watch
+	CriticalPct    float64
+	TrendPct       float64 // % change, first quarter avg -> last quarter avg
+	ThresholdLabel string
+	SampleCount    int
 }
 
 func Percentile(sorted []float64, p float64) float64 {

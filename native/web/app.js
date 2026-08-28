@@ -3,6 +3,8 @@ const state = {
   selectedId: null,
   hours: 24,
   arraysConfig: [],
+  retentionPeriod: "100y",
+  retentionOptions: [],
   // finding.ref values the user has expanded — kept across the 15s auto-refresh
   // (renderFleetView() replaces #findings' innerHTML wholesale every tick, which
   // would otherwise silently re-collapse anything the user had opened)
@@ -329,22 +331,50 @@ function renderConfigRows() {
   );
 }
 
+function formatBytes(n) {
+  if (n === null || n === undefined) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(i === 0 ? 0 : v < 10 ? 2 : 1)} ${units[i]}`;
+}
+
 async function loadConfigView() {
   const [arraysData, settings] = await Promise.all([api("/api/config/arrays"), api("/api/config/settings")]);
   state.arraysConfig = arraysData.arrays || [];
   renderConfigRows();
   document.getElementById("mock-data-toggle").checked = !!settings.mock_data;
+
+  state.retentionPeriod = settings.retention_period || "100y";
+  state.retentionOptions = settings.retention_options || [];
+  const select = document.getElementById("retention-select");
+  select.innerHTML = state.retentionOptions.map((o) => `<option value="${o.value}">${o.label}</option>`).join("");
+  select.value = state.retentionPeriod;
+  document.getElementById("db-size-note").textContent = formatBytes(settings.db_size_bytes);
+  applyRetentionLabel();
+
   await renderUpdatesRows();
+}
+
+// PUT /api/config/settings always writes both fields together — sending only
+// the one that changed would silently reset the other back to its zero value
+// server-side, since the handler decodes a full Settings-shaped payload.
+async function saveSettings(mockData, retentionPeriod) {
+  return api("/api/config/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mock_data: mockData, retention_period: retentionPeriod }),
+  });
 }
 
 document.getElementById("mock-data-toggle").addEventListener("change", async (e) => {
   const enabled = e.target.checked;
   try {
-    await api("/api/config/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mock_data: enabled }),
-    });
+    await saveSettings(enabled, state.retentionPeriod);
   } catch (err) {
     e.target.checked = !enabled; // revert on failure
     return;
@@ -352,6 +382,38 @@ document.getElementById("mock-data-toggle").addEventListener("change", async (e)
   document.getElementById("mock-pill").style.display = enabled ? "flex" : "none";
   state.selectedId = null;
   await tick();
+});
+
+// shorter → longer ordering, used to detect when a retention change would
+// purge existing history so we can confirm before sending it
+const RETENTION_ORDER = ["1w", "1M", "3M", "6M", "1y", "2y", "5y", "100y"];
+
+document.getElementById("retention-select").addEventListener("change", async (e) => {
+  const select = e.target;
+  const previous = state.retentionPeriod;
+  const next = select.value;
+  const status = document.getElementById("retention-status");
+
+  if (RETENTION_ORDER.indexOf(next) < RETENTION_ORDER.indexOf(previous)) {
+    const label = select.selectedOptions[0]?.textContent || next;
+    const ok = confirm(
+      `Shortening retention to ${label} will permanently delete data older than that window from the database. This cannot be undone. Continue?`
+    );
+    if (!ok) {
+      select.value = previous;
+      return;
+    }
+  }
+
+  try {
+    const res = await saveSettings(document.getElementById("mock-data-toggle").checked, next);
+    state.retentionPeriod = res.retention_period;
+    applyRetentionLabel();
+    status.textContent = "Retention updated — the database is restarting to apply it; dashboards may show a brief gap in live data.";
+  } catch (err) {
+    select.value = previous;
+    status.textContent = `Failed to update retention: ${err.message}`;
+  }
 });
 
 /* ---------------- updates (check-and-notify) ---------------- */
@@ -438,12 +500,23 @@ async function tick() {
   }
 }
 
+function applyRetentionLabel() {
+  const el = document.getElementById("retention-note");
+  if (!el) return;
+  const opt = state.retentionOptions.find((o) => o.value === state.retentionPeriod);
+  const label = opt ? opt.label : state.retentionPeriod;
+  el.innerHTML = `Retained history: <b>${label}</b> (VictoriaMetrics) · 15s native resolution`;
+}
+
 async function syncMockPill() {
   try {
     const settings = await api("/api/config/settings");
     document.getElementById("mock-pill").style.display = settings.mock_data ? "flex" : "none";
+    state.retentionPeriod = settings.retention_period || "100y";
+    state.retentionOptions = settings.retention_options || [];
+    applyRetentionLabel();
   } catch (e) {
-    /* non-fatal — pill just stays hidden until the Config tab is opened */
+    /* non-fatal — pill/label just stay at their defaults until the Config tab is opened */
   }
 }
 
