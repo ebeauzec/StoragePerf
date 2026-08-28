@@ -29,7 +29,7 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 	mux.HandleFunc("GET /api/cluster/metrics", func(w http.ResponseWriter, r *http.Request) {
 		// volume_avg_latency: display = latency.total(usec) / 1000.
 		// Thresholds (8ms/15ms) are in ms, so emit microseconds.
-		ms := mockdata.CurrentValue(arr.ID+"|volume_avg_latency", arr.Profile, "frontend", 8, 15, time.Now())
+		ms := arr.CurrentValue("volume_avg_latency", arr.ID+"|volume_avg_latency", "frontend", 8, 15, time.Now())
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
 				{"latency": map[string]any{"total": ms * 1000}, "timestamp": time.Now().Format("2006-01-02 15:04:05 -0700")},
@@ -39,7 +39,7 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 
 	mux.HandleFunc("GET /api/cluster/nodes", func(w http.ResponseWriter, r *http.Request) {
 		// node_cpu_busy: display = delta(raw)/delta(base)*100.
-		pct := mockdata.CurrentValue(arr.ID+"|node_cpu_busy", arr.Profile, "backend", 70, 85, time.Now())
+		pct := arr.CurrentValue("node_cpu_busy", arr.ID+"|node_cpu_busy", "backend", 70, 85, time.Now())
 		raw := counters.accumulate(arr.ID+"|cpu_raw", pct)
 		base := counters.accumulate(arr.ID+"|cpu_base", 100)
 		writeJSON(w, map[string]any{
@@ -53,7 +53,7 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		// aggr_space_used_percent: display = sum(used)/sum(size)*100 — a
 		// direct snapshot, no delta, so this can just fix size and derive
 		// used from the target percentage every time.
-		pct := mockdata.CurrentValue(arr.ID+"|aggr_capacity", arr.Profile, "backend", 80, 90, time.Now())
+		pct := arr.CurrentValue("aggr_capacity", arr.ID+"|aggr_capacity", "backend", 80, 90, time.Now())
 		const size = 1_000_000.0
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
@@ -63,7 +63,7 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 	})
 
 	mux.HandleFunc("GET /api/snapmirror/relationships", func(w http.ResponseWriter, r *http.Request) {
-		sec := mockdata.CurrentValue(arr.ID+"|snapmirror_lag", arr.Profile, "backend", 90, 180, time.Now())
+		sec := arr.CurrentValue("snapmirror_lag", arr.ID+"|snapmirror_lag", "backend", 90, 180, time.Now())
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
 				{"lag_time": formatISODuration(sec)},
@@ -73,7 +73,7 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 
 	mux.HandleFunc("GET /api/network/ethernet/ports", func(w http.ResponseWriter, r *http.Request) {
 		// nic_errors: display = rate(raw)*60, thresholds already errors/min.
-		perMin := mockdata.CurrentValue(arr.ID+"|nic_errors", arr.Profile, "frontend", 5, 15, time.Now())
+		perMin := arr.CurrentValue("nic_errors", arr.ID+"|nic_errors", "frontend", 5, 15, time.Now())
 		total := counters.accumulate(arr.ID+"|nic_errors", perMin/60.0)
 		half := total / 2
 		writeJSON(w, map[string]any{
@@ -98,7 +98,7 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 
 	mux.HandleFunc("GET /api/cluster/counter/tables/disk:constituent/rows", func(w http.ResponseWriter, r *http.Request) {
 		// aggr_disk_busy: display = avg over disks of delta(busy)/delta(denom)*100.
-		pct := mockdata.CurrentValue(arr.ID+"|aggr_disk_busy", arr.Profile, "backend", 70, 85, time.Now())
+		pct := arr.CurrentValue("aggr_disk_busy", arr.ID+"|aggr_disk_busy", "backend", 70, 85, time.Now())
 		records := make([]map[string]any, 0, 2)
 		for _, disk := range []string{"disk-1", "disk-2"} {
 			busy := counters.accumulate(arr.ID+"|"+disk+"|busy", pct)
@@ -118,7 +118,7 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		// nic_util_percent: display = max(rx,tx rate)/link_speed_bytes_per_sec*100.
 		// Link fixed at 1000M (125,000,000 B/s); accumulate bytes at the
 		// exact rate needed to hit the target percentage of that link.
-		pct := mockdata.CurrentValue(arr.ID+"|nic_utilization", arr.Profile, "frontend", 75, 90, time.Now())
+		pct := arr.CurrentValue("nic_utilization", arr.ID+"|nic_utilization", "frontend", 75, 90, time.Now())
 		const linkBytesPerSec = 1000 * 125000.0
 		rxRate := linkBytesPerSec * pct / 100
 		rx := counters.accumulate(arr.ID+"|nic_rx_bytes", rxRate)

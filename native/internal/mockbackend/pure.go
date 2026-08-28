@@ -92,31 +92,31 @@ func writeFlashArrayMetrics(w http.ResponseWriter, arr mockdata.Array, counters 
 
 	// host_latency: avg(...{dimension=~"read|write"}) / 1000 — thresholds
 	// (watch 2.0ms/critical 3.5ms) are in ms, so emit microseconds (×1000).
-	readMs := mockdata.CurrentValue(arr.ID+"|host_latency|read", arr.Profile, "frontend", 2.0, 3.5, now)
-	writeMs := mockdata.CurrentValue(arr.ID+"|host_latency|write", arr.Profile, "frontend", 2.0, 3.5, now)
+	readMs := arr.CurrentValue("host_latency", arr.ID+"|host_latency|read", "frontend", 2.0, 3.5, now)
+	writeMs := arr.CurrentValue("host_latency", arr.ID+"|host_latency|write", "frontend", 2.0, 3.5, now)
 	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="read"}`, readMs*1000)
 	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="write"}`, writeMs*1000)
 
 	// host_queue_depth: avg(...), no conversion, thresholds already in ops.
-	queue := mockdata.CurrentValue(arr.ID+"|host_queue_depth", arr.Profile, "frontend", 350, 450, now)
+	queue := arr.CurrentValue("host_queue_depth", arr.ID+"|host_queue_depth", "frontend", 350, 450, now)
 	fprintGauge(w, "purefa_array_performance_queue_depth_ops", "FlashArray array queue depth size", "", queue)
 
 	// network_errors: sum(rate(...)[5m])*60, thresholds already in
 	// errors/min — accumulate at that target per-second rate so the
 	// resulting rate() lands in the intended severity band regardless of
 	// the real scrape interval.
-	targetPerMin := mockdata.CurrentValue(arr.ID+"|network_errors", arr.Profile, "frontend", 5, 15, now)
+	targetPerMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 5, 15, now)
 	total := counters.accumulate(arr.ID+"|network_errors", targetPerMin/60.0)
 	fmt.Fprintf(w, "# HELP purefa_network_interface_performance_errors FlashArray network interfaces errors per second\n")
 	fmt.Fprintf(w, "# TYPE purefa_network_interface_performance_errors counter\n")
 	fmt.Fprintf(w, `purefa_network_interface_performance_errors{interface="ct0.FC1"} %g`+"\n", total)
 
 	// replication_lag: avg(...) / 1000, thresholds in seconds -> emit ms.
-	lagSec := mockdata.CurrentValue(arr.ID+"|replication_lag", arr.Profile, "backend", 90, 180, now)
+	lagSec := arr.CurrentValue("replication_lag", arr.ID+"|replication_lag", "backend", 90, 180, now)
 	fprintGauge(w, "purefa_pod_replica_links_lag_average_msec", "FlashArray pod replica links average lag in milliseconds", `{pod="dr-secondary"}`, lagSec*1000)
 
 	// pool_saturation: avg(...), already a percent, no conversion.
-	sat := mockdata.CurrentValue(arr.ID+"|pool_saturation", arr.Profile, "backend", 75, 85, now)
+	sat := arr.CurrentValue("pool_saturation", arr.ID+"|pool_saturation", "backend", 75, 85, now)
 	fprintGauge(w, "purefa_array_space_utilization", "FlashArray array space utilization in percent", "", sat)
 }
 
@@ -126,15 +126,15 @@ func writeFlashBladeMetrics(w http.ResponseWriter, arr mockdata.Array) {
 
 	// bucket_latency: avg(...{dimension=~"read|write"}) / 1000, thresholds
 	// (watch 5ms/critical 15ms) in ms -> emit microseconds.
-	readMs := mockdata.CurrentValue(arr.ID+"|bucket_latency|read", arr.Profile, "frontend", 5, 15, now)
-	writeMs := mockdata.CurrentValue(arr.ID+"|bucket_latency|write", arr.Profile, "frontend", 5, 15, now)
+	readMs := arr.CurrentValue("bucket_latency", arr.ID+"|bucket_latency|read", "frontend", 5, 15, now)
+	writeMs := arr.CurrentValue("bucket_latency", arr.ID+"|bucket_latency|write", "frontend", 5, 15, now)
 	fprintGauge(w, "purefb_buckets_performance_latency_usec", "FlashBlade buckets latency in microseconds", `{name="media-archive",dimension="read"}`, readMs*1000)
 	fprintGauge(w, "purefb_buckets_performance_latency_usec", "FlashBlade buckets latency in microseconds", `{name="media-archive",dimension="write"}`, writeMs*1000)
 
 	// bucket_throughput: sum(...{dimension=~"read|write"}), illustrative
 	// placeholder threshold — split across the two dimensions Pure
 	// publishes, read-heavy to match a typical media-archive workload.
-	total := mockdata.CurrentValue(arr.ID+"|bucket_throughput", arr.Profile, "backend", 100000, 200000, now)
+	total := arr.CurrentValue("bucket_throughput", arr.ID+"|bucket_throughput", "backend", 100000, 200000, now)
 	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="read"}`, total*0.6)
 	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="write"}`, total*0.4)
 }

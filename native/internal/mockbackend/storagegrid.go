@@ -36,24 +36,24 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 		var ok bool
 		switch query {
 		case "avg(storagegrid_metadata_queries_average_latency_milliseconds)":
-			value, ok = mockdata.CurrentValue(arr.ID+"|metadata_query_latency", arr.Profile, "frontend", 50, 150, now), true
+			value, ok = arr.CurrentValue("metadata_query_latency", arr.ID+"|metadata_query_latency", "frontend", 50, 150, now), true
 		case "avg(storagegrid_node_cpu_utilization_percentage)":
-			value, ok = mockdata.CurrentValue(arr.ID+"|node_cpu", arr.Profile, "backend", 70, 85, now), true
+			value, ok = arr.CurrentValue("node_cpu", arr.ID+"|node_cpu", "backend", 70, 85, now), true
 		case "sum(storagegrid_ilm_awaiting_total_objects)":
-			value, ok = mockdata.CurrentValue(arr.ID+"|ilm_backlog", arr.Profile, "backend", 100000, 1000000, now), true
+			value, ok = arr.CurrentValue("ilm_backlog", arr.ID+"|ilm_backlog", "backend", 100000, 1000000, now), true
 		case "sum(storagegrid_storage_utilization_total_space_bytes)":
 			value, ok = 1_000_000, true
 		case "sum(storagegrid_storage_utilization_usable_space_bytes)":
-			pct := mockdata.CurrentValue(arr.ID+"|storage_capacity", arr.Profile, "backend", 80, 90, now)
+			pct := arr.CurrentValue("storage_capacity", arr.ID+"|storage_capacity", "backend", 80, 90, now)
 			value, ok = 1_000_000*(1-pct/100), true
 		case "sum(storagegrid_s3_operations_failed)":
-			perMin := mockdata.CurrentValue(arr.ID+"|s3_error_rate", arr.Profile, "frontend", 5, 30, now)
+			perMin := arr.CurrentValue("s3_error_rate", arr.ID+"|s3_error_rate", "frontend", 5, 30, now)
 			value, ok = counters.accumulate(arr.ID+"|s3_failed", perMin/60.0), true
 		case "sum(node_network_receive_errs_total)":
-			perMin := mockdata.CurrentValue(arr.ID+"|network_errors", arr.Profile, "frontend", 5, 15, now)
+			perMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 5, 15, now)
 			value, ok = counters.accumulate(arr.ID+"|net_rx_errs", perMin/60.0/2), true
 		case "sum(node_network_transmit_errs_total)":
-			perMin := mockdata.CurrentValue(arr.ID+"|network_errors", arr.Profile, "frontend", 5, 15, now)
+			perMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 5, 15, now)
 			value, ok = counters.accumulate(arr.ID+"|net_tx_errs", perMin/60.0/2), true
 		}
 

@@ -11,7 +11,12 @@ const state = {
   expandedFindings: new Set(),
 };
 
+// 15M is the shortest practical window given the 15s scrape interval: at
+// window/300 points (see api.go's step calc, floored at 15s), 15M still
+// renders a full ~60-point curve, where 5M would floor to ~20 points and
+// look sparse for no real gain in freshness over 15M.
 const RANGES = [
+  { label: "15M", hours: 0.25 },
   { label: "1H", hours: 1 },
   { label: "24H", hours: 24 },
   { label: "7D", hours: 24 * 7 },

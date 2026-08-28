@@ -20,25 +20,118 @@ import (
 )
 
 // Array is one synthetic fleet member. Profile drives where its metrics sit
-// relative to each metric's own watch/critical thresholds — see
-// profileFactor — so this works for any vendor's thresholds file without
-// per-metric hardcoded values.
+// relative to each metric's own watch/critical thresholds by default — see
+// bandFactor — so this works for any vendor's thresholds file without
+// per-metric hardcoded values. Overrides pins one specific metric ID to an
+// explicit severity band regardless of Profile, for scenario systems that
+// need a precise, realistic pattern (e.g. "only the controller is
+// overloaded, everything else is fine") rather than an entire front-end or
+// back-end category moving together.
 type Array struct {
-	ID      string
-	Name    string
-	Model   string
-	Vendor  string
-	Profile string // "healthy" | "watch" | "critical"
+	ID        string
+	Name      string
+	Model     string
+	Vendor    string
+	Profile   string            // "healthy" | "watch" | "critical" — the default for any metric without an override
+	Overrides map[string]string // metric ID -> explicit severity, takes precedence over Profile
+}
+
+// severityFor resolves the target band for one metric: its explicit
+// override if set, else the array's overall Profile — with the same
+// critical+backend->healthy flip profileFactor always applied, since that
+// flip is what makes an unmodified "critical" Profile demonstrate the
+// upstream-bottleneck correlation finding. An override always means
+// exactly what it says, with no implicit category flip, since scenario
+// systems below use overrides specifically to defeat that generalization
+// and model something more specific.
+func (a Array) severityFor(metricID, category string) string {
+	if s, ok := a.Overrides[metricID]; ok {
+		return s
+	}
+	severity := a.Profile
+	if severity == "critical" && category == "backend" {
+		severity = "healthy"
+	}
+	return severity
 }
 
 var Fleet = []Array{
-	{"mock-fa-prod-east-01", "fa-prod-east-01", "FA-X90R2", config.VendorPureFlashArray, "critical"},
-	{"mock-fa-prod-west-02", "fa-prod-west-02", "FA-X70R3", config.VendorPureFlashArray, "watch"},
-	{"mock-fa-erp-cluster", "fa-erp-cluster", "FA-X70R3", config.VendorPureFlashArray, "healthy"},
-	{"mock-fb-media-01", "fb-media-01", "FlashBlade//S", config.VendorPureFlashBlade, "watch"},
-	{"mock-ontap-cluster-01", "ontap-cluster-01", "AFF A400", config.VendorNetAppONTAP, "critical"},
-	{"mock-ontap-cluster-02", "ontap-cluster-02", "AFF A250", config.VendorNetAppONTAP, "healthy"},
-	{"mock-sg-grid-01", "sg-grid-01", "StorageGRID", config.VendorNetAppStorageGRID, "watch"},
+	{ID: "mock-fa-prod-east-01", Name: "fa-prod-east-01", Model: "FA-X90R2", Vendor: config.VendorPureFlashArray, Profile: "critical"},
+	{ID: "mock-fa-prod-west-02", Name: "fa-prod-west-02", Model: "FA-X70R3", Vendor: config.VendorPureFlashArray, Profile: "watch"},
+	{ID: "mock-fa-erp-cluster", Name: "fa-erp-cluster", Model: "FA-X70R3", Vendor: config.VendorPureFlashArray, Profile: "healthy"},
+	{ID: "mock-fb-media-01", Name: "fb-media-01", Model: "FlashBlade//S", Vendor: config.VendorPureFlashBlade, Profile: "watch"},
+	{ID: "mock-ontap-cluster-01", Name: "ontap-cluster-01", Model: "AFF A400", Vendor: config.VendorNetAppONTAP, Profile: "critical"},
+	{ID: "mock-ontap-cluster-02", Name: "ontap-cluster-02", Model: "AFF A250", Vendor: config.VendorNetAppONTAP, Profile: "healthy"},
+	{ID: "mock-sg-grid-01", Name: "sg-grid-01", Model: "StorageGRID", Vendor: config.VendorNetAppStorageGRID, Profile: "watch"},
+
+	// --- Three additional, deliberately distinct failure patterns ---
+	//
+	// The seven systems above only ever show two shapes: uniformly healthy/
+	// watch, or the flagship "front-end bad, back-end spotless" pattern that
+	// triggers the upstream-bottleneck finding. Real fleets also produce
+	// patterns that DON'T fit that shape — where the array genuinely is the
+	// problem, or where a real issue is real but narrow enough that a
+	// latency-only dashboard would miss it. These three exist to show that
+	// Plumb's correlation logic isn't just pattern-matching "front-end
+	// worse than back-end" — it only fires when the back-end is genuinely
+	// clean, and stays silent (correctly) for these three, leaving the
+	// per-metric findings to tell the real story instead.
+
+	// 1. Back-end saturation with front-end fallout — the mirror image of
+	// the flagship pattern. Both node_cpu_busy and aggr_disk_busy critical
+	// (the controller and the disks behind it are both genuinely maxed
+	// out), which drags volume_avg_latency into watch as a real downstream
+	// symptom — not critical on its own, just elevated, which is exactly
+	// what makes this the common misdiagnosis: the on-call engineer sees
+	// "latency is up" and reflexively blames the network, when the array
+	// itself is the actual bottleneck. No correlation finding fires here,
+	// because the back-end is not clean — that absence is itself the
+	// diagnostic signal.
+	{
+		ID: "mock-ontap-cluster-03", Name: "ontap-cluster-03", Model: "AFF A400", Vendor: config.VendorNetAppONTAP,
+		Profile: "healthy",
+		Overrides: map[string]string{
+			"node_cpu_busy":      "critical",
+			"aggr_disk_busy":     "critical",
+			"volume_avg_latency": "watch",
+		},
+	},
+
+	// 2. Capacity-driven degradation — pool_saturation critical (the array
+	// is genuinely almost full), with host_latency and replication_lag
+	// both nudged into watch as real, correlated side effects: garbage
+	// collection/space reclamation competing for the same resources slows
+	// both host I/O and the replication pipeline. Queue depth and network
+	// errors stay clean, since neither is causally related to capacity
+	// pressure. This is a commonly under-diagnosed pattern because teams
+	// watch performance dashboards and capacity dashboards separately, and
+	// rarely correlate a slowly climbing capacity trend with the latency
+	// graph drifting upward alongside it.
+	{
+		ID: "mock-fa-capacity-01", Name: "fa-capacity-01", Model: "FA-X70R3", Vendor: config.VendorPureFlashArray,
+		Profile: "healthy",
+		Overrides: map[string]string{
+			"pool_saturation": "critical",
+			"host_latency":    "watch",
+			"replication_lag": "watch",
+		},
+	},
+
+	// 3. Isolated ILM backlog — every client-facing and node-level metric
+	// stays clean; only ilm_backlog is critical. StorageGRID's lifecycle-
+	// management backlog is the one metric on any vendor Plumb supports
+	// with no equivalent elsewhere (see docs/METRICS-REFERENCE.md §5), and
+	// it's specifically documented to rise before client-facing latency
+	// does — this system demonstrates exactly that: a real, worsening
+	// problem that's invisible on every metric except this one, making it
+	// a genuine early-warning case rather than an already-obvious outage.
+	{
+		ID: "mock-sg-grid-02", Name: "sg-grid-02", Model: "StorageGRID", Vendor: config.VendorNetAppStorageGRID,
+		Profile: "healthy",
+		Overrides: map[string]string{
+			"ilm_backlog": "critical",
+		},
+	},
 }
 
 func (a Array) AsConfigArray() config.Array {
@@ -49,29 +142,19 @@ func (a Array) IsNetApp() bool {
 	return a.Vendor == config.VendorNetAppONTAP || a.Vendor == config.VendorNetAppStorageGRID
 }
 
-// profileFactor picks a center value and noise amplitude relative to a
-// metric's own thresholds, so "critical" always renders meaningfully above
-// that metric's critical line and "healthy" comfortably below its watch
-// line, regardless of the metric's actual unit or scale.
-//
-// A "critical" array is deliberately front-end-critical but back-end-clean
-// — not every metric pushed to critical uniformly — because that's the one
-// pattern that demonstrates Plumb's flagship correlation finding ("bottleneck
-// is likely upstream"). Making every metric on a bad array uniformly bad
-// would be an easier implementation but a worse demo: it would never show
-// the one piece of inferred intelligence the whole front-end/back-end split
-// exists to produce. See rules.BuildFindings for the actual correlation
-// logic this is set up to trigger.
-func profileFactor(profile, category string, watch, critical float64) (center, noise float64) {
-	effective := profile
-	if profile == "critical" && category == "backend" {
-		effective = "healthy"
-	}
+// bandFactor picks a center value and noise amplitude that render
+// meaningfully inside the given severity band relative to a metric's own
+// thresholds — "critical" comfortably above the critical line, "watch"
+// between watch and critical, "healthy" comfortably below watch — for any
+// metric's own unit or scale. See Array.severityFor for how a metric's
+// target band is chosen (Profile by default, or an explicit Overrides
+// entry for scenario systems targeting one specific metric).
+func bandFactor(severity string, watch, critical float64) (center, noise float64) {
 	spread := critical - watch
 	if spread <= 0 {
 		spread = math.Abs(critical)*0.2 + 1
 	}
-	switch effective {
+	switch severity {
 	case "critical":
 		return critical + spread*0.3, spread * 0.15
 	case "watch":
@@ -125,11 +208,17 @@ func valueAt(seed string, t time.Time, center, noise float64) float64 {
 }
 
 // CurrentValue returns the synthetic value for one (array, metric) at time
-// t. internal/mockbackend calls this on every request to its mock
-// endpoints — VictoriaMetrics builds up the historical series over real
-// scrape cycles from these live values, exactly like a real array, rather
-// than this package pre-computing a series itself.
-func CurrentValue(seed, profile, category string, watch, critical float64, t time.Time) float64 {
-	center, noise := profileFactor(profile, category, watch, critical)
+// t, using the array's per-metric severity (Overrides, or Profile with its
+// category flip). internal/mockbackend calls this on every request to its
+// mock endpoints — VictoriaMetrics builds up the historical series over
+// real scrape cycles from these live values, exactly like a real array,
+// rather than this package pre-computing a series itself.
+//
+// metricID identifies which metric this is for Overrides lookup; seed is
+// the wave-function key and may differ from metricID (e.g. a metric with
+// separate read/write dimensions uses one CurrentValue call per dimension,
+// each with its own seed, but both resolve the same metricID's severity).
+func (a Array) CurrentValue(metricID, seed, category string, watch, critical float64, t time.Time) float64 {
+	center, noise := bandFactor(a.severityFor(metricID, category), watch, critical)
 	return valueAt(seed, t, center, noise)
 }
