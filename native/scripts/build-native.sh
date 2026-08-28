@@ -43,10 +43,17 @@ for row in "${TARGETS[@]}"; do
   fi
 
   cp -R config "$outdir/config"
-  # never ship a real arrays.yml with someone's demo/test data as the
-  # "live" config — ship only the documented example, first run creates
-  # arrays.yml from it automatically (see cmd/plumb/main.go)
-  rm -f "$outdir/config/arrays.yml"
+  # never ship a real arrays.yml or settings.yml with whoever built this
+  # package's own demo/test/local state as the "live" config — ship only
+  # the documented example; both are recreated fresh on first run
+  # (see cmd/plumb/main.go and config.LoadSettings's missing-file default)
+  rm -f "$outdir/config/arrays.yml" "$outdir/config/settings.yml"
+
+  # defense in depth: data/ is runtime state (VictoriaMetrics/Prometheus
+  # storage, generated scrape configs) and this loop never intentionally
+  # copies it — but a distributable must never ship a real one regardless
+  # of how it got there
+  rm -rf "$outdir/data"
 
   # LICENSE/LEGAL.md/THIRD_PARTY_NOTICES.md/LICENSES/ must accompany every
   # distributed copy — this is what makes bundling the Apache-2.0 sidecar
