@@ -2,11 +2,13 @@ package netappnative
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"plumb/internal/config"
 )
@@ -191,6 +193,159 @@ func TestONTAP_UnreachableHost_ProducesNotesNotCrash(t *testing.T) {
 	mustContain(t, out, "unavailable for unreachable-01")
 	if strings.Contains(out, "panic") {
 		t.Errorf("output should never contain a panic trace")
+	}
+}
+
+func TestONTAP_AggrDiskBusy_SchemaDrivenPercentOfDenominator(t *testing.T) {
+	const schemaPath = "/api/cluster/counter/tables/disk:constituent"
+	const rowsPath = "/api/cluster/counter/tables/disk:constituent/rows"
+	schema := `{"name":"disk:constituent","counter_schemas":[
+		{"name":"disk_busy_percent","type":"percent","denominator":{"name":"base_for_disk_busy_percent"}},
+		{"name":"base_for_disk_busy_percent","type":"delta"}
+	]}`
+	rowFixtures := []string{
+		`{"records":[
+			{"id":"disk-1","counters":[{"name":"disk_busy_percent","value":1000},{"name":"base_for_disk_busy_percent","value":10000}]},
+			{"id":"disk-2","counters":[{"name":"disk_busy_percent","value":2000},{"name":"base_for_disk_busy_percent","value":10000}]}
+		]}`,
+		`{"records":[
+			{"id":"disk-1","counters":[{"name":"disk_busy_percent","value":1100},{"name":"base_for_disk_busy_percent","value":10500}]},
+			{"id":"disk-2","counters":[{"name":"disk_busy_percent","value":2300},{"name":"base_for_disk_busy_percent","value":10500}]}
+		]}`,
+	}
+	poll := 0
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case schemaPath:
+			w.Write([]byte(schema))
+		case rowsPath:
+			w.Write([]byte(rowFixtures[poll]))
+			poll++
+		default:
+			w.Write([]byte(`{"records":[]}`))
+		}
+	}))
+	defer srv.Close()
+
+	c := NewONTAPCollector()
+	arr := newTestArray(t, srv)
+
+	var buf1 bytes.Buffer
+	if err := c.WriteMetrics(&buf1, arr); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf1.String(), "aggr_disk_busy{") {
+		t.Errorf("expected no aggr_disk_busy sample on first poll, got:\n%s", buf1.String())
+	}
+	mustContain(t, buf1.String(), "warming up")
+
+	var buf2 bytes.Buffer
+	if err := c.WriteMetrics(&buf2, arr); err != nil {
+		t.Fatal(err)
+	}
+	// disk-1: delta(busy)=100, delta(denom)=500 -> 20%
+	// disk-2: delta(busy)=300, delta(denom)=500 -> 60%
+	// average across disks = 40%
+	mustContain(t, buf2.String(), `aggr_disk_busy{array="test-ontap-01"} 40`)
+}
+
+func TestONTAP_AggrDiskBusy_UnexpectedCounterTypeIsNotedNotGuessed(t *testing.T) {
+	srv := httptest.NewTLSServer(pathRouter(map[string]string{
+		"/api/cluster/counter/tables/disk:constituent": `{"name":"disk:constituent","counter_schemas":[
+			{"name":"disk_busy_percent","type":"rate"}
+		]}`,
+	}))
+	defer srv.Close()
+
+	c := NewONTAPCollector()
+	arr := newTestArray(t, srv)
+	var buf bytes.Buffer
+	if err := c.WriteMetrics(&buf, arr); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "aggr_disk_busy{") {
+		t.Errorf("expected no fabricated aggr_disk_busy value for an unexpected counter type, got:\n%s", buf.String())
+	}
+	mustContain(t, buf.String(), "unexpected counter type")
+}
+
+func TestONTAP_NICUtilization_ComputesPercentOfLinkSpeed(t *testing.T) {
+	const rowsPath = "/api/cluster/counter/tables/nic_common/rows"
+	poll := 0
+	rowFixtures := []string{
+		`{"records":[{"id":"node1:e0a","properties":[{"name":"speed","value":"1000M"}],"counters":[{"name":"receive_bytes","value":1000000},{"name":"transmit_bytes","value":500000}]}]}`,
+		`{"records":[{"id":"node1:e0a","properties":[{"name":"speed","value":"1000M"}],"counters":[{"name":"receive_bytes","value":51000000},{"name":"transmit_bytes","value":500500}]}]}`,
+	}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != rowsPath {
+			w.Write([]byte(`{"records":[]}`))
+			return
+		}
+		w.Write([]byte(rowFixtures[poll]))
+		poll++
+	}))
+	defer srv.Close()
+
+	c := NewONTAPCollector()
+	arr := newTestArray(t, srv)
+
+	var buf1 bytes.Buffer
+	if err := c.WriteMetrics(&buf1, arr); err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, buf1.String(), "warming up")
+
+	time.Sleep(100 * time.Millisecond)
+	var buf2 bytes.Buffer
+	if err := c.WriteMetrics(&buf2, arr); err != nil {
+		t.Fatal(err)
+	}
+	out := buf2.String()
+	mustContain(t, out, "nic_util_percent")
+	// receive_bytes jumped by 50MB over ~100ms (~500MB/s) against a 1000M
+	// link (125,000,000 B/s) — comfortably over 100% utilization; exact
+	// value is timing-dependent (wall-clock elapsed time, not a fixed
+	// tick), so this only asserts the code path produces a large, sane,
+	// finite value rather than pinning an exact number.
+	idx := strings.Index(out, `nic_util_percent{array="test-ontap-01"} `)
+	if idx == -1 {
+		t.Fatalf("nic_util_percent sample not found in output:\n%s", out)
+	}
+	var val float64
+	if _, err := fmt.Sscanf(out[idx:], `nic_util_percent{array="test-ontap-01"} %f`, &val); err != nil {
+		t.Fatalf("could not parse nic_util_percent value: %v", err)
+	}
+	if val < 50 {
+		t.Errorf("expected a large utilization percent (rx rate far exceeds link speed in this fixture), got %v", val)
+	}
+}
+
+func TestONTAP_NICUtilization_MissingSpeedIsSkippedNotCrashed(t *testing.T) {
+	srv := httptest.NewTLSServer(pathRouter(map[string]string{
+		"/api/cluster/counter/tables/nic_common/rows": `{"records":[
+			{"id":"node1:e0a","properties":[],"counters":[{"name":"receive_bytes","value":100},{"name":"transmit_bytes","value":50}]}
+		]}`,
+	}))
+	defer srv.Close()
+
+	c := NewONTAPCollector()
+	arr := newTestArray(t, srv)
+	var buf bytes.Buffer
+	if err := c.WriteMetrics(&buf, arr); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "nic_util_percent{") {
+		t.Errorf("expected no nic_util_percent value when speed property is missing, got:\n%s", buf.String())
+	}
+}
+
+func TestParseNICSpeedBytesPerSec(t *testing.T) {
+	got, ok := parseNICSpeedBytesPerSec("1000M")
+	if !ok || got != 1000*125000 {
+		t.Errorf("parseNICSpeedBytesPerSec(\"1000M\") = %v, %v; want %v, true", got, ok, 1000*125000)
+	}
+	if _, ok := parseNICSpeedBytesPerSec("10G"); ok {
+		t.Errorf("parseNICSpeedBytesPerSec(\"10G\") should fail — only the \"M\" suffix form is handled, matching Harvest's own parser")
 	}
 }
 

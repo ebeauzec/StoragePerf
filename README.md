@@ -319,9 +319,12 @@ binaries, so NetApp monitoring didn't work on Windows or macOS at all. It's
 been replaced with `internal/netappnative`, an independent collector
 written from Harvest's and NetApp's own published source and documentation
 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), removing that
-platform dependency entirely. Two ONTAP metrics Harvest used to publish
-(`aggr_disk_busy`, `nic_utilization`) aren't produced by the new collector —
-see `internal/netappnative/ontap.go`'s package doc for exactly why.
+platform dependency entirely, with full metric parity — all seven ONTAP
+metrics and all six StorageGRID metrics Harvest used to publish are
+produced, including the two (`aggr_disk_busy`, `nic_utilization`) that
+need ONTAP's raw performance counter-tables API — see
+`internal/netappnative/ontap_countertables.go`'s doc comment for exactly
+how that's implemented.
 
 **Demo mode has two forms:**
 

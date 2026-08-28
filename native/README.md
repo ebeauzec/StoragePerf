@@ -57,9 +57,10 @@ versions collected NetApp systems via a bundled copy of NetApp's own
 Harvest, which only published linux/amd64 binaries; `internal/netappnative`
 replaces that with an independent collector (written from Harvest's and
 NetApp's own published source — see `../THIRD_PARTY_NOTICES.md`) that works
-on every platform, at the cost of two ONTAP metrics Harvest used to publish
-(`aggr_disk_busy`, `nic_utilization`) not being produced — see that
-package's doc comment for why.
+on every platform, with full metric parity — including `aggr_disk_busy`
+and `nic_util_percent`, which need ONTAP's raw performance counter-tables
+API rather than its simpler REST resource endpoints; see
+`ontap_countertables.go`'s doc comment for how that's implemented.
 
 ## Reports and export
 

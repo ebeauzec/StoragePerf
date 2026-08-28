@@ -9,12 +9,12 @@
 // used to expose: the same metric names, the same `array` label, the same
 // units — so config/thresholds/netapp_ontap.yml and
 // config/thresholds/netapp_storagegrid.yml, and everything downstream of
-// them (panels, findings, reports), needed zero changes. Only two ONTAP
-// metrics (aggr_disk_busy, nic_utilization) are not produced here — no
-// confirmed, documented REST source for either was found, and shipping a
-// guessed formula for a live customer pilot was judged worse than an
-// honest gap. See the per-metric comments in ontap.go for what backs the
-// other five.
+// them (panels, findings, reports), needed zero changes. Every metric
+// Harvest used to publish for these two vendors is reproduced here,
+// including the two ONTAP metrics (aggr_disk_busy, nic_util_percent) that
+// need ONTAP's raw performance counter-tables API rather than its simpler
+// REST resource endpoints — see ontap.go and ontap_countertables.go for
+// the full per-metric source trail.
 package netappnative
 
 import (

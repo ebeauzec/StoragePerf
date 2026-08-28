@@ -36,10 +36,13 @@ are guessed.
 **Platform note:** all four vendors work on every platform Plumb ships for
 (Linux, macOS, Windows). Through v0.6.1, NetApp collection went through a
 bundled copy of NetApp's own Harvest, which only published linux/amd64
-binaries — `internal/netappnative` removes that dependency, at the cost of
-two ONTAP metrics Harvest used to publish (`aggr_disk_busy`,
-`nic_utilization`) not being produced; see that package's doc comment for
-why. See [../native/README.md](../native/README.md).
+binaries — `internal/netappnative` removes that dependency with full metric
+parity: every ONTAP and StorageGRID metric Harvest used to publish is still
+produced, including `aggr_disk_busy` and `nic_util_percent`, which need
+ONTAP's raw performance counter-tables API rather than its simpler REST
+resource endpoints (the request pattern is copied directly from Harvest's
+own Go source — see `internal/netappnative/ontap_countertables.go`'s doc
+comment). See [../native/README.md](../native/README.md).
 
 ---
 
@@ -133,23 +136,23 @@ the full source trail per metric)
 | Metric ID | Prometheus metric | Category | What it measures | Interpretation |
 |---|---|---|---|---|
 | `volume_avg_latency` | `volume_avg_latency` | Front-end | Cluster-wide average latency, in milliseconds directly (no unit conversion needed) | NetApp's own guidance is explicit that this is workload-dependent — see [PERFORMANCE-ANALYSIS.md §6](PERFORMANCE-ANALYSIS.md#6-why-plumbs-thresholds-are-illustrative-not-gospel) for their own published example |
-| `nic_utilization` | `nic_util_percent` | Front-end | Network port utilization percentage | **Not produced.** A confirmed correct formula exists (max of receive/transmit throughput vs. link speed, from Harvest's own Nic plugin source), but it needs ONTAP's raw performance counter-tables API, whose bulk-fetch query mechanics couldn't be confirmed without a live cluster — see the package doc comment |
-| `nic_errors` | `nic_rx_crc_errors` (rate) | Front-end | Total receive+transmit errors per network port | Sourced from the port's general error counters, not the CRC-specific counter Harvest itself reads (which lives behind the same unconfirmed counter-tables API as `nic_utilization`) — a reasonable but less precise proxy for "this link has a problem" |
+| `nic_utilization` | `nic_util_percent` | Front-end | Maximum network port utilization percentage, any port | Computed as max(receive rate, transmit rate) ÷ link speed, from ONTAP's raw performance counter-tables API — the same formula and data source Harvest's own Nic plugin uses, reimplemented independently (see `ontap_countertables.go`'s doc comment) |
+| `nic_errors` | `nic_rx_crc_errors` (rate) | Front-end | Total receive+transmit errors per network port | Sourced from the port's general error counters (a simpler REST resource, not the counter-tables API), not the CRC-specific counter Harvest itself reads — a reasonable but less precise proxy for "this link has a problem" |
 | `node_cpu_busy` | `node_cpu_busy` | Back-end | Controller/node CPU busy percentage | Computed as a ratio of two counters' deltas between polls (NetApp's own documented single-sample formula is confirmed wrong — see the package doc comment) — this is the metric Pure's public endpoint doesn't have an equivalent for |
-| `aggr_disk_busy` | `aggr_disk_busy` | Back-end | Aggregate-level disk busy percentage | **Not produced** — same unconfirmed counter-tables API dependency as `nic_utilization` |
+| `aggr_disk_busy` | `aggr_disk_busy` | Back-end | Average disk busy percentage across all disks | Computed the same schema-driven way as `nic_utilization`: ONTAP's counter-tables API self-describes each counter's type and which counter it must be divided against, so this reads that schema live rather than assuming a fixed denominator |
 | `snapmirror_lag` | `snapmirror_lag_time` | Back-end | Replication lag, already in seconds | The only vendor here whose replication-lag metric needs no unit conversion at all |
 | `aggr_capacity` | `aggr_space_used_percent` | Back-end | Aggregate capacity utilization | Same interpretation as Pure's capacity metric — a leading performance indicator, not purely a capacity one |
 
-**On the back-end column's two gaps:** `aggr_disk_busy` and `nic_utilization`
-would otherwise make ONTAP's back-end column the most complete of any
-vendor Plumb supports, since Harvest's REST/RestPerf collectors do expose
-genuine controller- and media-level utilization metrics that neither Pure's
-nor StorageGRID's public endpoints currently do. Both have a confirmed
-formula (see the package doc comment) — what's missing is confidence in the
-counter-tables API's bulk-query mechanics, which couldn't be verified
-without a live cluster. The correlation finding still works correctly with
-what *is* collected; it just has one fewer confirming signal on ONTAP than
-it otherwise could.
+**On the back-end column being the most complete:** Harvest's REST/RestPerf
+collectors expose genuine controller- and media-level utilization metrics
+that neither Pure's nor StorageGRID's public endpoints currently do, and
+`internal/netappnative` reproduces all of them — `node_cpu_busy` and
+`aggr_disk_busy` both required reading ONTAP's raw counter-tables API
+correctly (see `ontap_countertables.go`), not just the simpler REST
+resource endpoints the other five metrics use. This makes the correlation
+finding's "upstream vs. internal" claim strongest for ONTAP arrays: it's
+checking real internal-load metrics on both fronts, not just the absence
+of capacity/replication problems.
 
 ---
 

@@ -17,8 +17,8 @@ import (
 
 // ONTAPCollector polls a cluster's REST API directly (basic auth, the same
 // auth_style and account Harvest's own setup docs call for) and re-exposes
-// five of the seven metrics config/thresholds/netapp_ontap.yml expects,
-// under the exact same names Harvest used to produce:
+// all seven metrics config/thresholds/netapp_ontap.yml expects, under the
+// exact same names Harvest used to produce:
 //
 //   - volume_avg_latency  — GET /api/cluster/metrics, latency.total (µs→ms).
 //     Cluster-wide rather than per-volume: avoids an N+1 fetch across every
@@ -48,22 +48,15 @@ import (
 //     query already wraps this in rate(...), so summing the current
 //     cumulative total and letting that existing query do the diffing is
 //     the standard Prometheus idiom for counters.
-//
-// aggr_disk_busy and nic_utilization are deliberately NOT produced. Both
-// have a confirmed-correct formula (verified against Harvest's own Go
-// source — see cmd/collectors/restperf/{restperf.go,plugins/nic/nic.go}
-// upstream): a percent-type counter's value is delta(counter)/delta(its
-// declared denominator counter)*100, and NIC utilization is
-// max(rate(receive_bytes),rate(transmit_bytes))/link_speed_bytes_per_sec*100.
-// What's NOT confirmed is the counter-tables API's bulk-fetch query syntax
-// for retrieving many rows' counters+properties in one call without an
-// N+1 per-disk/per-port fetch — every source found showed single-row
-// examples only. Implementing that blind, for an API this collector can't
-// be tested against before a live pilot, was judged worse than the honest
-// gap these two metrics leave.
+//   - aggr_disk_busy, nic_util_percent — see ontap_countertables.go. Both
+//     need ONTAP's raw performance counter-tables API (a different
+//     endpoint family from the six metrics above), whose bulk-fetch query
+//     syntax is copied directly from Harvest's own production Go source
+//     rather than guessed.
 type ONTAPCollector struct {
 	mu       sync.Mutex
 	cpuState map[string]cpuSample
+	schemaState
 }
 
 type cpuSample struct {
@@ -72,7 +65,7 @@ type cpuSample struct {
 }
 
 func NewONTAPCollector() *ONTAPCollector {
-	return &ONTAPCollector{cpuState: map[string]cpuSample{}}
+	return &ONTAPCollector{cpuState: map[string]cpuSample{}, schemaState: newSchemaState()}
 }
 
 func (c *ONTAPCollector) client(arr config.Array) *http.Client {
@@ -122,6 +115,8 @@ func (c *ONTAPCollector) WriteMetrics(w io.Writer, arr config.Array) error {
 	c.collectAggregateCapacity(pw, client, arr)
 	c.collectSnapMirrorLag(pw, client, arr)
 	c.collectNICErrors(pw, client, arr)
+	c.collectAggrDiskBusy(pw, client, arr)
+	c.collectNICUtilization(pw, client, arr)
 
 	return pw.Emit(w)
 }
