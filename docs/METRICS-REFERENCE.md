@@ -176,6 +176,21 @@ not third-party reverse-engineered
 | `ilm_backlog` | `storagegrid_ilm_awaiting_total_objects` | Back-end | Objects awaiting Information Lifecycle Management evaluation | **The one metric with no equivalent on any other platform Plumb supports.** ILM backlog is an object-storage-specific saturation signal — see [Section 2](#2-side-by-side-the-same-concept-four-vendors) — and tends to rise *before* client-facing latency does, making it a genuine early-warning metric unique to this vendor |
 | `storage_capacity` | computed: `100 * (1 - usable_space_bytes / total_space_bytes)` | Back-end | Storage capacity used, as a percentage | The only capacity metric in Plumb computed from a ratio of two raw byte-count metrics rather than read directly as a percentage |
 
+**Per-node breakdown:** every metric above is collected two ways —
+grid-wide (the row in this table, via `avg()`/`sum()`) and per-node,
+using the same underlying data with the node dimension kept instead of
+collapsed. StorageGRID's own Prometheus already labels each sample with
+the standard Prometheus `instance` label identifying which node it came
+from (confirmed via the grid's `/api/v3/grid/metric-labels/instance/values`
+endpoint) — Plumb's Array Detail view shows this as a "By node" list
+under the panel, worst node first, whenever one exists, so a grid-wide
+finding can be traced back to the specific Admin/Storage/Gateway node
+driving it without a separate trip to Grid Manager. See
+`config.MetricDef.NodeBreakdownQuery` and
+`internal/netappnative/storagegrid.go`'s `writeNodeBreakdowns` for the
+implementation — this mechanism is vendor-agnostic and available to any
+future vendor's thresholds file, not StorageGRID-specific.
+
 ---
 
 ## 7. How to Verify a Metric Name Yourself

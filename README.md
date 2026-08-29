@@ -253,8 +253,15 @@ below.
 The selected system's Front-End (left) and Back-End (right) columns, each
 panel showing current value, severity badge, a chart with the illustrative
 threshold line overlaid, and the threshold label itself. A time-range picker
-(1H/24H/7D/30D/90D/1Y) controls both the charts and the Report/Export
+(15M/1H/24H/7D/30D/90D/1Y) controls both the charts and the Report/Export
 buttons above them.
+
+For NetApp StorageGRID systems specifically, panels also show a **By node**
+breakdown — worst node first, color-coded by severity — so a grid-wide
+finding can be traced back to the specific Admin/Storage/Gateway node
+driving it, instead of just knowing something on the grid is degraded. See
+[Metrics Reference §6](docs/METRICS-REFERENCE.md#6-netapp-storagegrid) for
+how this is collected.
 
 ### Findings
 
