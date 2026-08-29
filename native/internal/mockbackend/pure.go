@@ -104,8 +104,12 @@ func writeFlashArrayMetrics(w http.ResponseWriter, arr mockdata.Array, counters 
 	// network_errors: sum(rate(...)[5m])*60, thresholds already in
 	// errors/min — accumulate at that target per-second rate so the
 	// resulting rate() lands in the intended severity band regardless of
-	// the real scrape interval.
-	targetPerMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 5, 15, now)
+	// the real scrape interval. Band args (0.01, 5) mirror the real
+	// severity_watch/severity_critical in pure_flasharray.yml: industry
+	// practice treats any sustained nonzero CRC/link error rate as a fault,
+	// not background noise, so "healthy" here targets genuine near-zero
+	// rather than a comfortable nonzero band like every other metric.
+	targetPerMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 0.01, 5, now)
 	total := counters.accumulate(arr.ID+"|network_errors", targetPerMin/60.0)
 	fmt.Fprintf(w, "# HELP purefa_network_interface_performance_errors FlashArray network interfaces errors per second\n")
 	fmt.Fprintf(w, "# TYPE purefa_network_interface_performance_errors counter\n")

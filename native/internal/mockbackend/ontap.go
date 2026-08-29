@@ -73,7 +73,10 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 
 	mux.HandleFunc("GET /api/network/ethernet/ports", func(w http.ResponseWriter, r *http.Request) {
 		// nic_errors: display = rate(raw)*60, thresholds already errors/min.
-		perMin := arr.CurrentValue("nic_errors", arr.ID+"|nic_errors", "frontend", 5, 15, time.Now())
+		// Band args (0.01, 5) mirror severity_watch/severity_critical in
+		// netapp_ontap.yml: any sustained nonzero CRC rate is a fault by
+		// industry practice, so "healthy" targets genuine near-zero.
+		perMin := arr.CurrentValue("nic_errors", arr.ID+"|nic_errors", "frontend", 0.01, 5, time.Now())
 		total := counters.accumulate(arr.ID+"|nic_errors", perMin/60.0)
 		half := total / 2
 		writeJSON(w, map[string]any{

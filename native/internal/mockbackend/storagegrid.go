@@ -50,10 +50,13 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 			perMin := arr.CurrentValue("s3_error_rate", arr.ID+"|s3_error_rate", "frontend", 5, 30, now)
 			value, ok = counters.accumulate(arr.ID+"|s3_failed", perMin/60.0), true
 		case "sum(node_network_receive_errs_total)":
-			perMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 5, 15, now)
+			// Band args (0.01, 5) mirror severity_watch/severity_critical in
+			// netapp_storagegrid.yml: any sustained nonzero rate is a fault
+			// by industry practice, so "healthy" targets genuine near-zero.
+			perMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 0.01, 5, now)
 			value, ok = counters.accumulate(arr.ID+"|net_rx_errs", perMin/60.0/2), true
 		case "sum(node_network_transmit_errs_total)":
-			perMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 5, 15, now)
+			perMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 0.01, 5, now)
 			value, ok = counters.accumulate(arr.ID+"|net_tx_errs", perMin/60.0/2), true
 		}
 

@@ -62,14 +62,22 @@ metrics:
     category: frontend
     label: "Network Interface Errors"
     unit: "errors/min"
+    # Industry practice (Brocade/Cisco FC troubleshooting guidance, general
+    # Ethernet physical-layer diagnostics) treats CRC/link errors as a fault
+    # to eliminate, not a rate to tolerate — the accepted baseline is zero,
+    # and any sustained nonzero count means a marginal cable/SFP/port.
+    # severity_watch is a negligible epsilon rather than a literal 0: the
+    # engine classifies with value >= watch, so 0 exactly would misclassify
+    # an actually-clean link (which reports precisely 0.0) as permanently
+    # "Watch". Any real error pushes the rate well above this epsilon.
     query: 'sum(rate(node_network_receive_errs_total{array="{array}"}[5m]) + rate(node_network_transmit_errs_total{array="{array}"}[5m])) * 60'
     comparison: gt
-    severity_watch: 5
-    severity_critical: 15
-    threshold_label: "< 5 / min (illustrative)"
+    severity_watch: 0.01
+    severity_critical: 5
+    threshold_label: "> 0 / min — any sustained rate is a physical-layer fault"
     finding:
-      watch: "Network interface error rate is {value:.1f}/min — worth checking cabling/NIC health on this node."
-      critical: "Network interface error rate is {value:.1f}/min — a marginal link is a plausible cause of client-visible slowness."
+      watch: "Network interface errors are occurring ({value:.2f}/min) — industry practice treats any sustained nonzero rate as a physical-layer fault, not background noise. Check cabling/NIC health on this node."
+      critical: "Network interface error rate is {value:.1f}/min — an actively degrading link, a plausible cause of client-visible slowness."
     investigate:
       - "Identify the specific node and interface from the underlying node_network_* labels."
       - "Check the physical layer: cable, NIC, and the switch port's own error counters."
@@ -83,11 +91,18 @@ metrics:
     category: backend
     label: "Node CPU Utilization"
     unit: "%"
+    # 70%/85% is modeled on NetApp's own documented ONTAP per-node CPU
+    # guidance (see node_cpu_busy in netapp_ontap.yml) — but that KB is
+    # specifically about ONTAP controllers running WAFL, not StorageGRID's
+    # LDR/ADC/CMN service nodes, which have different CPU/workload
+    # characteristics. Treat this as a reasonable starting convention
+    # carried over by analogy, not an independently confirmed StorageGRID
+    # number.
     query: 'avg(storagegrid_node_cpu_utilization_percentage{array="{array}"})'
     comparison: gt
     severity_watch: 70
     severity_critical: 85
-    threshold_label: "< 70% sustained (illustrative)"
+    threshold_label: "< 70% sustained (ONTAP-convention analogy — not independently published for StorageGRID)"
     finding:
       watch: "Node CPU utilization is averaging {value:.0f}%, above the 70% sustained guidance."
       critical: "Node CPU utilization is averaging {value:.0f}% — the node itself is now a contributing factor to any client-facing slowness."
@@ -125,11 +140,16 @@ metrics:
     category: backend
     label: "Storage Capacity Used"
     unit: "%"
+    # 80%/90% line up with the general storage-industry capacity convention
+    # (also mirrored in NetApp's own ONTAP aggregate-growth guidance, see
+    # netapp_ontap.yml) — not a StorageGRID-specific published number, since
+    # no such NetApp doc was found for the grid specifically, but the same
+    # "plan ahead of scarcity" reasoning applies to object storage nodes.
     query: '100 * (1 - (storagegrid_storage_utilization_usable_space_bytes{array="{array}"} / storagegrid_storage_utilization_total_space_bytes{array="{array}"}))'
     comparison: gt
     severity_watch: 80
     severity_critical: 90
-    threshold_label: "< 80% (illustrative)"
+    threshold_label: "< 80% — general storage capacity convention"
     finding:
       watch: "Storage capacity is at {value:.0f}% used, above the 80% guidance."
       critical: "Storage capacity is at {value:.0f}% used — new object ingest is at risk on this node, not just performance."

@@ -104,14 +104,22 @@ metrics:
     # likely an `interface` or `name` label following a ctX.FCn pattern),
     # add it here, e.g. interface=~"ct.*\\.FC.*", to scope this to fabric
     # ports specifically.
+    # Industry practice (Brocade/Cisco FC troubleshooting guidance, general
+    # Ethernet physical-layer diagnostics) treats CRC/link errors as a fault
+    # to eliminate, not a rate to tolerate — the accepted baseline is zero,
+    # and any sustained nonzero count means a marginal cable/SFP/port.
+    # severity_watch is a negligible epsilon rather than a literal 0: the
+    # engine classifies with value >= watch, so 0 exactly would misclassify
+    # an actually-clean link (which reports precisely 0.0) as permanently
+    # "Watch". Any real error pushes the rate well above this epsilon.
     query: 'sum(rate(purefa_network_interface_performance_errors{array="{array}"}[5m])) * 60'
     comparison: gt
-    severity_watch: 5
-    severity_critical: 15
-    threshold_label: "< 5 / min (illustrative)"
+    severity_watch: 0.01
+    severity_critical: 5
+    threshold_label: "> 0 / min — any sustained rate is a physical-layer fault"
     finding:
-      watch: "Network interface error rate is {value:.1f}/min, above the {threshold:.0f}/min illustrative ceiling — worth checking cabling/SFPs."
-      critical: "Network interface error rate is {value:.1f}/min — this points to a marginal link, not array load."
+      watch: "Network interface errors are occurring ({value:.2f}/min) — industry practice treats any sustained nonzero rate as a physical-layer fault, not background noise. Check cabling/SFPs."
+      critical: "Network interface error rate is {value:.1f}/min — an actively degrading link, not array load."
     investigate:
       - "Identify the specific interface(s) contributing to the error count from the array's own port statistics."
       - "Check the physical layer first: cable seating, SFP health/optical power, and switch-port error counters on the other end."
@@ -152,11 +160,18 @@ metrics:
     unit: "%"
     # purefa_array_space_utilization is real, confirmed, and already a
     # percentage — no unit conversion needed.
+    #
+    # 75%/85% line up with the general storage-industry capacity convention
+    # (alert around 75%, treat 85-90%+ as critical — the same logic behind
+    # NetApp's own 80-85% aggregate-growth guidance, see netapp_ontap.yml):
+    # performance on any array degrades as free space gets scarce, and flash
+    # arrays specifically need working room for garbage collection/wear
+    # leveling. Not a Pure-published SLA, but not arbitrary either.
     query: 'avg(purefa_array_space_utilization{array="{array}"})'
     comparison: gt
     severity_watch: 75
     severity_critical: 85
-    threshold_label: "< 75% (illustrative)"
+    threshold_label: "< 75% — general storage capacity convention"
     finding:
       watch: "Capacity utilization is at {value:.0f}%, above the {threshold:.0f}% illustrative guidance."
       critical: "Capacity utilization is at {value:.0f}% — capacity, not just performance, is now a near-term risk."

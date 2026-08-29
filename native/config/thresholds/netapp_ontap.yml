@@ -50,11 +50,17 @@ metrics:
     category: frontend
     label: "NIC Utilization (max port)"
     unit: "%"
+    # Not a NetApp-published number, but not arbitrary either: 75% is the
+    # standard N+1 redundancy engineering convention — if this port's
+    # partner fails over onto it, traffic roughly doubles, so headroom
+    # below ~75-80% is what keeps a failover from also saturating the
+    # survivor. Tune to your actual failover ratio (some environments are
+    # N+2 or asymmetric) rather than treating 75% as universal.
     query: 'max(nic_util_percent{array="{array}"})'
     comparison: gt
     severity_watch: 75
     severity_critical: 90
-    threshold_label: "< 75% (illustrative)"
+    threshold_label: "< 75% — N+1 failover headroom convention"
     finding:
       watch: "A network port is at {value:.0f}% utilization, above the 75% guidance that preserves headroom for failover."
       critical: "A network port is at {value:.0f}% utilization — a failover event would likely saturate the remaining path."
@@ -71,16 +77,24 @@ metrics:
     category: frontend
     label: "NIC CRC / Receive Errors"
     unit: "errors/min"
+    # Industry practice (Brocade/Cisco FC troubleshooting guidance, general
+    # Ethernet physical-layer diagnostics) treats CRC/link errors as a fault
+    # to eliminate, not a rate to tolerate — the accepted baseline is zero,
+    # and any sustained nonzero count means a marginal cable/SFP/port.
+    # severity_watch is a negligible epsilon rather than a literal 0: the
+    # engine classifies with value >= watch, so 0 exactly would misclassify
+    # an actually-clean link (which reports precisely 0.0) as permanently
+    # "Watch". Any real error pushes the rate well above this epsilon.
     query: 'sum(rate(nic_rx_crc_errors{array="{array}"}[5m])) * 60'
     comparison: gt
-    severity_watch: 5
-    severity_critical: 15
-    threshold_label: "< 5 / min (illustrative)"
+    severity_watch: 0.01
+    severity_critical: 5
+    threshold_label: "> 0 / min — any sustained rate is a physical-layer fault"
     finding:
-      watch: "NIC CRC error rate is {value:.1f}/min, above the 5/min reference — check the cable/SFP."
-      critical: "NIC CRC error rate is {value:.1f}/min — points to a marginal link, not cluster load."
+      watch: "NIC CRC errors are occurring ({value:.2f}/min) — industry practice treats any sustained nonzero rate as a physical-layer fault, not background noise. Check the cable/SFP."
+      critical: "NIC CRC error rate is {value:.1f}/min — an actively degrading link, not cluster load."
     investigate:
-      - "Identify the specific port from Harvest's per-port error breakdown."
+      - "Identify the specific port from the array's own per-port error breakdown."
       - "Check the physical layer: cable, SFP, and the switch port's own error counters."
       - "Review recent cabling, SFP, or switch-side changes."
     remediate:
@@ -92,13 +106,19 @@ metrics:
     category: backend
     label: "Node CPU Busy"
     unit: "%"
+    # 70% is not a placeholder — it's NetApp's own documented guidance
+    # (support KB "This system is reporting a high average CPU utilization"):
+    # sustained CPU above 70% per node on ONTAP 9.7+ (60% on 9.6 and earlier)
+    # is NetApp's own trigger to review and relocate workloads. 85% critical
+    # is a reasonable buffer above that documented line, not itself an
+    # officially published number.
     query: 'avg(node_cpu_busy{array="{array}"})'
     comparison: gt
     severity_watch: 70
     severity_critical: 85
-    threshold_label: "< 70% sustained (illustrative)"
+    threshold_label: "< 70% sustained — NetApp's own documented guidance"
     finding:
-      watch: "Node CPU busy is averaging {value:.0f}%, above the 70% sustained guidance."
+      watch: "Node CPU busy is averaging {value:.0f}%, above NetApp's own 70% sustained guidance for ONTAP 9.7+."
       critical: "Node CPU busy is averaging {value:.0f}% — the controller itself is now a contributing factor, not just the path to it."
     investigate:
       - "Check which processes/workloads are consuming CPU via Harvest's node/CPU-domain breakdown, if enabled."
@@ -113,11 +133,17 @@ metrics:
     category: backend
     label: "Aggregate Disk Busy"
     unit: "%"
+    # Unlike node_cpu_busy, NetApp does not publish a specific disk-busy%
+    # target in public documentation (their KB on disk utilization/latency
+    # resolution paths references "beyond critical threshold" without
+    # stating the number). These values are modeled by analogy to the
+    # documented CPU guidance, not independently confirmed for disks —
+    # still a reasonable engineering default, just a real gap.
     query: 'avg(aggr_disk_busy{array="{array}"})'
     comparison: gt
     severity_watch: 70
     severity_critical: 85
-    threshold_label: "< 70% sustained (illustrative)"
+    threshold_label: "< 70% sustained (engineering estimate — not independently published)"
     finding:
       watch: "Aggregate disk busy is averaging {value:.0f}%, above the 70% guidance."
       critical: "Aggregate disk busy is averaging {value:.0f}% — the backing disks are the likely bottleneck, not the network path."
@@ -155,11 +181,17 @@ metrics:
     category: backend
     label: "Aggregate Capacity Used"
     unit: "%"
+    # Not a placeholder — 80% matches NetApp's own documented guidance to
+    # grow an aggregate as it approaches 80-85% utilization for performance
+    # reasons (separate from ONTAP's own nearly-full/full EMS thresholds,
+    # which default to 95%/98% and are about avoiding outright ENOSPC, not
+    # performance). 90% critical matches the general storage-industry
+    # capacity convention (avoid sustained utilization above ~85-90%).
     query: 'avg(aggr_space_used_percent{array="{array}"})'
     comparison: gt
     severity_watch: 80
     severity_critical: 90
-    threshold_label: "< 80% (illustrative)"
+    threshold_label: "< 80% — NetApp's own aggregate-growth guidance"
     finding:
       watch: "Aggregate capacity is at {value:.0f}%, above the 80% guidance — reduction efficiency or growth should be reviewed."
       critical: "Aggregate capacity is at {value:.0f}% — ONTAP's own performance degrades as aggregates approach full, on top of the capacity risk."
