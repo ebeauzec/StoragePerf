@@ -9,6 +9,7 @@
 /native/config/arrays.yml
 /native/config/settings.yml
 /plumb-release/
+/.plumb-upgrade-preserve/
 
 # Local runtime state
 data/

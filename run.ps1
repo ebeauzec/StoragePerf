@@ -41,6 +41,24 @@ if ($alreadyInstalled) {
     Write-Host "==> Downloading $($asset.name) ($tag)"
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
 
+    # Preserve what the user actually owns across the upgrade: the
+    # collected metrics database and their real array inventory/settings.
+    # An upgrade replaces the application code and bundled defaults — it
+    # must never throw away a live database or real credentials to do
+    # that.
+    $preserve = ".plumb-upgrade-preserve"
+    if (Test-Path $preserve) { Remove-Item -Recurse -Force $preserve }
+    New-Item -ItemType Directory -Path $preserve | Out-Null
+    $oldData = Join-Path $Dest "data"
+    if (Test-Path $oldData) { Move-Item $oldData (Join-Path $preserve "data") }
+    $oldArrays = Join-Path $Dest "config\arrays.yml"
+    $oldSettings = Join-Path $Dest "config\settings.yml"
+    if ((Test-Path $oldArrays) -or (Test-Path $oldSettings)) {
+        New-Item -ItemType Directory -Path (Join-Path $preserve "config") | Out-Null
+        if (Test-Path $oldArrays) { Move-Item $oldArrays (Join-Path $preserve "config\arrays.yml") }
+        if (Test-Path $oldSettings) { Move-Item $oldSettings (Join-Path $preserve "config\settings.yml") }
+    }
+
     Write-Host "==> Installing to .\$Dest"
     if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
     $tempExtract = Join-Path $env:TEMP "plumb-extract-$tag"
@@ -54,6 +72,17 @@ if ($alreadyInstalled) {
     Move-Item $inner.FullName $Dest
     Remove-Item -Recurse -Force $tempExtract
     Remove-Item $zipPath
+
+    if (Test-Path (Join-Path $preserve "data")) {
+        Write-Host "==> Restoring existing metrics database"
+        Move-Item (Join-Path $preserve "data") (Join-Path $Dest "data")
+    }
+    $newArrays = Join-Path $preserve "config\arrays.yml"
+    $newSettings = Join-Path $preserve "config\settings.yml"
+    if (Test-Path $newArrays) { Move-Item $newArrays $oldArrays }
+    if (Test-Path $newSettings) { Move-Item $newSettings $oldSettings }
+    Remove-Item -Recurse -Force $preserve
+
     Set-Content -Path $marker -Value $tag
 }
 

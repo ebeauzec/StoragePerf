@@ -62,11 +62,36 @@ else
   tmp=$(mktemp -d)
   curl -fsSL -o "$tmp/$asset_name" "$asset_url"
 
+  # Preserve what the user actually owns across the upgrade: the collected
+  # metrics database and their real array inventory/settings. An upgrade
+  # replaces the application code and bundled defaults — it must never
+  # throw away a live database or real credentials to do that. Held in a
+  # sibling dir (not $tmp, which mktemp may place on a different
+  # filesystem/volume) so the final restore is a same-filesystem mv.
+  preserve=".plumb-upgrade-preserve"
+  rm -rf "$preserve"
+  mkdir -p "$preserve"
+  [ -d "$DEST/data" ] && mv "$DEST/data" "$preserve/data"
+  if [ -f "$DEST/config/arrays.yml" ] || [ -f "$DEST/config/settings.yml" ]; then
+    mkdir -p "$preserve/config"
+    [ -f "$DEST/config/arrays.yml" ] && mv "$DEST/config/arrays.yml" "$preserve/config/"
+    [ -f "$DEST/config/settings.yml" ] && mv "$DEST/config/settings.yml" "$preserve/config/"
+  fi
+
   echo "==> Installing to ./$DEST"
   rm -rf "$DEST"
   mkdir -p "$DEST"
   tar -xzf "$tmp/$asset_name" -C "$DEST" --strip-components=1
   rm -rf "$tmp"
+
+  if [ -d "$preserve/data" ]; then
+    echo "==> Restoring existing metrics database"
+    mv "$preserve/data" "$DEST/data"
+  fi
+  [ -f "$preserve/config/arrays.yml" ] && mv "$preserve/config/arrays.yml" "$DEST/config/arrays.yml"
+  [ -f "$preserve/config/settings.yml" ] && mv "$preserve/config/settings.yml" "$DEST/config/settings.yml"
+  rm -rf "$preserve"
+
   echo "$tag" > "$marker"
 fi
 
