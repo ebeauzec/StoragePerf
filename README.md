@@ -253,7 +253,7 @@ below.
 The selected system's Front-End (left) and Back-End (right) columns, each
 panel showing current value, severity badge, a chart with the illustrative
 threshold line overlaid, and the threshold label itself. A time-range picker
-(15M/1H/24H/7D/30D/90D/1Y) controls both the charts and the Report/Export
+(Realtime/15M/1H/24H/7D/30D/90D/1Y) controls both the charts and the Report/Export
 buttons above them.
 
 For NetApp StorageGRID systems specifically, panels also show a **By node**
