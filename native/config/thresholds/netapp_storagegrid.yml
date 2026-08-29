@@ -21,6 +21,12 @@ metrics:
     label: "Metadata Query Latency"
     unit: ms
     query: 'avg(storagegrid_metadata_queries_average_latency_milliseconds{array="{array}"})'
+    # Grid-wide avg() above tells you THAT latency is elevated; this
+    # breaks it back down to WHICH node, from the same underlying
+    # per-node data (see internal/netappnative/storagegrid.go's
+    # writeNodeBreakdowns) rather than requiring a separate trip to Grid
+    # Manager to find out.
+    node_breakdown_query: 'storagegrid_metadata_query_latency_by_node_ms{array="{array}"}'
     comparison: gt
     severity_watch: 50
     severity_critical: 150
@@ -31,7 +37,7 @@ metrics:
     investigate:
       - "Check this node's Cassandra/metadata service health and compaction activity — metadata latency often traces back there."
       - "Confirm this node's CPU utilization (see the back-end panel) — a busy node commonly shows up first as metadata latency."
-      - "Check whether the latency is isolated to one node or grid-wide, using the Grid Manager's per-node metrics."
+      - "Use this panel's per-node breakdown to see whether the latency is isolated to one node or grid-wide."
     remediate:
       - "If isolated to one node, investigate that node's local resource pressure (CPU, disk I/O) directly."
       - "If grid-wide, review recent ingest-volume growth against the grid's provisioned metadata capacity."
@@ -42,6 +48,7 @@ metrics:
     label: "S3 Operation Failure Rate"
     unit: "failures/min"
     query: 'sum(rate(storagegrid_s3_operations_failed{array="{array}"}[5m])) * 60'
+    node_breakdown_query: 'storagegrid_s3_error_rate_by_node_per_min{array="{array}"}'
     comparison: gt
     severity_watch: 5
     severity_critical: 30
@@ -71,6 +78,7 @@ metrics:
     # an actually-clean link (which reports precisely 0.0) as permanently
     # "Watch". Any real error pushes the rate well above this epsilon.
     query: 'sum(rate(node_network_receive_errs_total{array="{array}"}[5m]) + rate(node_network_transmit_errs_total{array="{array}"}[5m])) * 60'
+    node_breakdown_query: 'storagegrid_network_errors_by_node_per_min{array="{array}"}'
     comparison: gt
     severity_watch: 0.01
     severity_critical: 5
@@ -79,7 +87,7 @@ metrics:
       watch: "Network interface errors are occurring ({value:.2f}/min) — industry practice treats any sustained nonzero rate as a physical-layer fault, not background noise. Check cabling/NIC health on this node."
       critical: "Network interface error rate is {value:.1f}/min — an actively degrading link, a plausible cause of client-visible slowness."
     investigate:
-      - "Identify the specific node and interface from the underlying node_network_* labels."
+      - "Use this panel's per-node breakdown to identify the specific node, then check its interface-level counters directly."
       - "Check the physical layer: cable, NIC, and the switch port's own error counters."
       - "Review recent cabling, NIC, or switch-side changes on this node."
     remediate:
@@ -99,6 +107,7 @@ metrics:
     # carried over by analogy, not an independently confirmed StorageGRID
     # number.
     query: 'avg(storagegrid_node_cpu_utilization_percentage{array="{array}"})'
+    node_breakdown_query: 'storagegrid_node_cpu_by_node_pct{array="{array}"}'
     comparison: gt
     severity_watch: 70
     severity_critical: 85
@@ -107,9 +116,9 @@ metrics:
       watch: "Node CPU utilization is averaging {value:.0f}%, above the 70% sustained guidance."
       critical: "Node CPU utilization is averaging {value:.0f}% — the node itself is now a contributing factor to any client-facing slowness."
     investigate:
-      - "Identify which service (LDR, ADC, CMN, metadata) is consuming CPU on this node, if per-service metrics are available."
+      - "Use this panel's per-node breakdown to find which node is hottest, then identify which service (LDR, ADC, CMN, metadata) is consuming its CPU."
       - "Check for a recent increase in ingest rate, ILM policy complexity, or scan/verification jobs."
-      - "Compare against other nodes in the same site to see if load is unevenly distributed."
+      - "Compare the breakdown across nodes in the same site to see if load is unevenly distributed."
     remediate:
       - "Rebalance client/load-balancer traffic away from this node if others have more headroom."
       - "Simplify or reschedule ILM policy evaluation if it's a major CPU contributor."
@@ -120,6 +129,7 @@ metrics:
     label: "ILM Evaluation Backlog"
     unit: objects
     query: 'sum(storagegrid_ilm_awaiting_total_objects{array="{array}"})'
+    node_breakdown_query: 'storagegrid_ilm_backlog_by_node_objects{array="{array}"}'
     comparison: gt
     severity_watch: 100000
     severity_critical: 1000000
@@ -128,7 +138,7 @@ metrics:
       watch: "{value:.0f} objects are awaiting ILM evaluation — a growing backlog here is an early signal of a node falling behind, before it shows up as client latency."
       critical: "{value:.0f} objects are awaiting ILM evaluation — this node is materially behind on lifecycle management, which risks both performance and policy compliance (replication/erasure-coding placement)."
     investigate:
-      - "Check whether the backlog is isolated to this node or grid-wide, and whether it correlates with recent ingest bursts."
+      - "Use this panel's per-node breakdown to see whether the backlog is isolated to one node or spread grid-wide, and whether it correlates with recent ingest bursts."
       - "Review ILM policy complexity — policies with many placement rules or evaluation criteria take longer per object."
       - "Confirm this node's CPU and metadata latency aren't independently elevated and causing the backlog as a side effect."
     remediate:
@@ -146,6 +156,7 @@ metrics:
     # no such NetApp doc was found for the grid specifically, but the same
     # "plan ahead of scarcity" reasoning applies to object storage nodes.
     query: '100 * (1 - (storagegrid_storage_utilization_usable_space_bytes{array="{array}"} / storagegrid_storage_utilization_total_space_bytes{array="{array}"}))'
+    node_breakdown_query: 'storagegrid_storage_capacity_by_node_pct{array="{array}"}'
     comparison: gt
     severity_watch: 80
     severity_critical: 90
@@ -154,7 +165,7 @@ metrics:
       watch: "Storage capacity is at {value:.0f}% used, above the 80% guidance."
       critical: "Storage capacity is at {value:.0f}% used — new object ingest is at risk on this node, not just performance."
     investigate:
-      - "Break down usage by tenant/bucket to identify what's driving growth."
+      - "Use this panel's per-node breakdown to see which node is closest to full, then break down its usage by tenant/bucket to identify what's driving growth."
       - "Check ILM policy placement — verify objects are being tiered/erasure-coded as intended rather than left in a more space-intensive state."
       - "Review ingest-rate trend over the reporting window (7D/30D) to project time-to-full."
     remediate:

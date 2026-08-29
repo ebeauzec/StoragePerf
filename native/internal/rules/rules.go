@@ -49,6 +49,17 @@ type Panel struct {
 	Watch          float64      `json:"watch"`
 	Critical       float64      `json:"critical"`
 	Series         [][2]float64 `json:"series"`
+	// Nodes is only present for a metric with NodeBreakdownQuery set (see
+	// config.MetricDef) — a multi-node system's per-node values for this
+	// same metric, worst (highest) first, so a grid/cluster-wide finding
+	// can be traced back to the specific node driving it.
+	Nodes []NodeValue `json:"nodes,omitempty"`
+}
+
+type NodeValue struct {
+	Node     string   `json:"node"`
+	Value    float64  `json:"value"`
+	Severity Severity `json:"severity"`
 }
 
 type Finding struct {
@@ -140,10 +151,28 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 			valPtr = &v
 		}
 
+		var nodes []NodeValue
+		if m.NodeBreakdownQuery != "" {
+			pts, err := client.InstantQueryVector(substitute(m.NodeBreakdownQuery, arr.ID))
+			if err != nil {
+				return Result{}, fmt.Errorf("node breakdown querying %s: %w", m.ID, err)
+			}
+			nodes = make([]NodeValue, 0, len(pts))
+			for _, p := range pts {
+				node := p.Labels["node"]
+				if node == "" {
+					continue
+				}
+				nodes = append(nodes, NodeValue{Node: node, Value: p.Value, Severity: Classify(p.Value, true, m.SeverityWatch, m.SeverityCritical)})
+			}
+			sort.Slice(nodes, func(i, j int) bool { return nodes[i].Value > nodes[j].Value })
+		}
+
 		panels = append(panels, Panel{
 			ID: m.ID, Label: m.Label, Unit: m.Unit, Category: m.Category,
 			Value: valPtr, Severity: sev, ThresholdLabel: m.ThresholdLabel,
 			Watch: m.SeverityWatch, Critical: m.SeverityCritical, Series: series,
+			Nodes: nodes,
 		})
 	}
 

@@ -36,7 +36,7 @@ type Array struct {
 	Overrides map[string]string // metric ID -> explicit severity, takes precedence over Profile
 }
 
-// severityFor resolves the target band for one metric: its explicit
+// SeverityFor resolves the target band for one metric: its explicit
 // override if set, else the array's overall Profile — with the same
 // critical+backend->healthy flip profileFactor always applied, since that
 // flip is what makes an unmodified "critical" Profile demonstrate the
@@ -44,7 +44,7 @@ type Array struct {
 // exactly what it says, with no implicit category flip, since scenario
 // systems below use overrides specifically to defeat that generalization
 // and model something more specific.
-func (a Array) severityFor(metricID, category string) string {
+func (a Array) SeverityFor(metricID, category string) string {
 	if s, ok := a.Overrides[metricID]; ok {
 		return s
 	}
@@ -146,7 +146,7 @@ func (a Array) IsNetApp() bool {
 // meaningfully inside the given severity band relative to a metric's own
 // thresholds — "critical" comfortably above the critical line, "watch"
 // between watch and critical, "healthy" comfortably below watch — for any
-// metric's own unit or scale. See Array.severityFor for how a metric's
+// metric's own unit or scale. See Array.SeverityFor for how a metric's
 // target band is chosen (Profile by default, or an explicit Overrides
 // entry for scenario systems targeting one specific metric).
 func bandFactor(severity string, watch, critical float64) (center, noise float64) {
@@ -219,6 +219,17 @@ func valueAt(seed string, t time.Time, center, noise float64) float64 {
 // separate read/write dimensions uses one CurrentValue call per dimension,
 // each with its own seed, but both resolve the same metricID's severity).
 func (a Array) CurrentValue(metricID, seed, category string, watch, critical float64, t time.Time) float64 {
-	center, noise := bandFactor(a.severityFor(metricID, category), watch, critical)
+	center, noise := bandFactor(a.SeverityFor(metricID, category), watch, critical)
+	return valueAt(seed, t, center, noise)
+}
+
+// ValueForSeverity is CurrentValue with an explicit severity band instead
+// of one resolved from the array's Profile/Overrides — for simulating a
+// per-node breakdown, where most nodes should look healthy regardless of
+// the array's own severity, and (when the array isn't healthy) exactly one
+// node should carry it, rather than every node uniformly showing whatever
+// the grid-wide severity is.
+func (a Array) ValueForSeverity(seed, severity string, watch, critical float64, t time.Time) float64 {
+	center, noise := bandFactor(severity, watch, critical)
 	return valueAt(seed, t, center, noise)
 }

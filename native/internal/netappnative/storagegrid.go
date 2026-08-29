@@ -121,28 +121,32 @@ type promInstantResponse struct {
 	Status string `json:"status"`
 	Data   struct {
 		Result []struct {
-			Value [2]any `json:"value"`
+			Metric map[string]string `json:"metric"`
+			Value  [2]any            `json:"value"`
 		} `json:"result"`
 	} `json:"data"`
 }
 
-// query runs a single PromQL expression against arr's grid, retrying once
-// with a fresh token if the cached one has expired.
-func (c *StorageGridCollector) query(client *http.Client, arr config.Array, promql string) (float64, bool, error) {
+// queryRaw runs a single PromQL expression against arr's grid, retrying
+// once with a fresh token if the cached one has expired, and returns every
+// result series with its labels intact — the shared plumbing behind both
+// query() (single-series callers, which use only Result[0]) and
+// queryVector() (multi-series callers, e.g. a `by (node)` grouping).
+func (c *StorageGridCollector) queryRaw(client *http.Client, arr config.Array, promql string) (promInstantResponse, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		tok, err := c.token(client, arr)
 		if err != nil {
-			return 0, false, err
+			return promInstantResponse{}, err
 		}
 		u := "https://" + arr.ManagementLIF + "/api/v3/grid/metric-query?query=" + url.QueryEscape(promql)
 		req, err := http.NewRequest("GET", u, nil)
 		if err != nil {
-			return 0, false, err
+			return promInstantResponse{}, err
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
 		resp, err := client.Do(req)
 		if err != nil {
-			return 0, false, err
+			return promInstantResponse{}, err
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -151,26 +155,82 @@ func (c *StorageGridCollector) query(client *http.Client, arr config.Array, prom
 			continue // one retry with a fresh login
 		}
 		if readErr != nil {
-			return 0, false, readErr
+			return promInstantResponse{}, readErr
 		}
 		if resp.StatusCode != 200 {
-			return 0, false, fmt.Errorf("metric-query: %s: %s", resp.Status, string(body))
+			return promInstantResponse{}, fmt.Errorf("metric-query: %s: %s", resp.Status, string(body))
 		}
 		var pr promInstantResponse
 		if err := json.Unmarshal(body, &pr); err != nil {
-			return 0, false, fmt.Errorf("metric-query: could not parse response: %w", err)
+			return promInstantResponse{}, fmt.Errorf("metric-query: could not parse response: %w", err)
 		}
-		if len(pr.Data.Result) == 0 {
-			return 0, false, nil
+		return pr, nil
+	}
+	return promInstantResponse{}, fmt.Errorf("metric-query: authentication failed after retry")
+}
+
+// query runs promql and returns its first (and normally only) result's
+// value — for the existing grid-wide avg()/sum() queries, which always
+// collapse to a single series.
+func (c *StorageGridCollector) query(client *http.Client, arr config.Array, promql string) (float64, bool, error) {
+	pr, err := c.queryRaw(client, arr, promql)
+	if err != nil {
+		return 0, false, err
+	}
+	if len(pr.Data.Result) == 0 {
+		return 0, false, nil
+	}
+	v, ok := pr.Data.Result[0].Value[1].(string)
+	if !ok {
+		return 0, false, fmt.Errorf("metric-query: unexpected value type in response")
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	return f, err == nil, err
+}
+
+// nodeSample is one series from a `by (node)` query result.
+type nodeSample struct {
+	node  string
+	value float64
+}
+
+// queryVector runs promql and returns every result series paired with its
+// node identity — for the per-node breakdown queries, which deliberately
+// don't aggregate away the node dimension.
+//
+// StorageGRID's own Grid Management API docs don't publish a label schema
+// for these metrics directly, but its metric-labels endpoint
+// (/api/v3/grid/metric-labels/instance/values) confirms "instance" —
+// Prometheus's standard scrape-target label — is what identifies which
+// node a sample came from: the Admin Node's Prometheus scrapes each node's
+// own local exporters, so every series it collects gets tagged with that
+// target's instance the same way any Prometheus setup would, rather than a
+// StorageGRID-specific "node" label. Results missing it (shouldn't happen
+// for the queries this collector sends, but a StorageGRID version change
+// is exactly the kind of thing that could break silently) are skipped
+// rather than surfaced as an unlabeled row.
+func (c *StorageGridCollector) queryVector(client *http.Client, arr config.Array, promql string) ([]nodeSample, error) {
+	pr, err := c.queryRaw(client, arr, promql)
+	if err != nil {
+		return nil, err
+	}
+	samples := make([]nodeSample, 0, len(pr.Data.Result))
+	for _, r := range pr.Data.Result {
+		node := r.Metric["instance"]
+		if node == "" {
+			continue
 		}
-		v, ok := pr.Data.Result[0].Value[1].(string)
+		v, ok := r.Value[1].(string)
 		if !ok {
-			return 0, false, fmt.Errorf("metric-query: unexpected value type in response")
+			continue
 		}
 		f, err := strconv.ParseFloat(v, 64)
-		return f, err == nil, err
+		if err != nil {
+			continue
+		}
+		samples = append(samples, nodeSample{node: node, value: f})
 	}
-	return 0, false, fmt.Errorf("metric-query: authentication failed after retry")
+	return samples, nil
 }
 
 // WriteMetrics writes a Prometheus exposition-format scrape for one
@@ -252,5 +312,53 @@ func (c *StorageGridCollector) WriteMetrics(w io.Writer, arr config.Array) error
 		pw.counter(nc.metric, nc.help, arr.ID, v)
 	}
 
+	c.writeNodeBreakdowns(pw, client, arr)
+
 	return pw.Emit(w)
+}
+
+// writeNodeBreakdowns fetches and writes a per-node view of the same six
+// metrics above, under distinct `_by_node` metric names rather than adding
+// a `node` label onto the existing grid-wide names — so this can never
+// change what the grid-wide avg()/sum() queries in
+// config/thresholds/netapp_storagegrid.yml compute (they select on the
+// original metric names only), while still letting the UI answer "which
+// node" for a finding that already fired on the grid-wide number.
+//
+// Each query below asks StorageGRID for the raw, unaggregated metric (or,
+// for rate-based ones, a per-node rate) instead of wrapping it in avg()/
+// sum() the way the grid-wide queries do — the point here is to keep the
+// node dimension, not collapse it. Best-effort per metric, matching the
+// rest of this collector: one metric failing doesn't block the others.
+func (c *StorageGridCollector) writeNodeBreakdowns(pw *promWriter, client *http.Client, arr config.Array) {
+	byNode := []struct {
+		metric, help, query string
+	}{
+		{"storagegrid_metadata_query_latency_by_node_ms", "Metadata query latency by node, milliseconds",
+			"storagegrid_metadata_queries_average_latency_milliseconds"},
+		{"storagegrid_node_cpu_by_node_pct", "Node CPU utilization by node, percent",
+			"storagegrid_node_cpu_utilization_percentage"},
+		{"storagegrid_ilm_backlog_by_node_objects", "Objects awaiting ILM evaluation by node",
+			"storagegrid_ilm_awaiting_total_objects"},
+		{"storagegrid_s3_error_rate_by_node_per_min", "Failed S3 operations by node, per minute",
+			"rate(storagegrid_s3_operations_failed[5m]) * 60"},
+		{"storagegrid_network_errors_by_node_per_min", "Network interface errors by node, per minute",
+			"(rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m])) * 60"},
+		{"storagegrid_storage_capacity_by_node_pct", "Storage capacity used by node, percent",
+			"100 * (1 - (storagegrid_storage_utilization_usable_space_bytes / storagegrid_storage_utilization_total_space_bytes))"},
+	}
+	for _, bn := range byNode {
+		samples, err := c.queryVector(client, arr, bn.query)
+		if err != nil {
+			pw.note(bn.metric, "%s unavailable for %s: %v", bn.metric, arr.ID, err)
+			continue
+		}
+		if len(samples) == 0 {
+			pw.note(bn.metric, "%s unavailable for %s: no per-node data returned", bn.metric, arr.ID)
+			continue
+		}
+		for _, s := range samples {
+			pw.gaugeNode(bn.metric, bn.help, arr.ID, s.node, s.value)
+		}
+	}
 }

@@ -50,6 +50,22 @@ func (p *promWriter) counter(name, help, arrayID string, value float64) {
 	p.blocks[name] = fmt.Sprintf("# HELP %s %s\n# TYPE %s counter\n%s{array=%q} %g\n", name, help, name, name, arrayID, value)
 }
 
+// gaugeNode appends one per-node sample under name, in addition to
+// whatever gauge()/counter() already wrote for that same name — used for
+// the separate `_by_node` breakdown metrics (see storagegrid.go), which
+// are deliberately distinct metric names from the grid-wide aggregates so
+// adding per-node samples can never change what an existing avg()/sum()
+// query over the grid-wide metric returns. Unlike gauge()/counter(), this
+// appends rather than replaces, since a metric with a node breakdown is
+// called once per node within one WriteMetrics invocation.
+func (p *promWriter) gaugeNode(name, help, arrayID, node string, value float64) {
+	p.ensure()
+	if _, ok := p.blocks[name]; !ok {
+		p.blocks[name] = fmt.Sprintf("# HELP %s %s\n# TYPE %s gauge\n", name, help, name)
+	}
+	p.blocks[name] += fmt.Sprintf("%s{array=%q,node=%q} %g\n", name, arrayID, node, value)
+}
+
 // note records a metric that could not be collected this poll (endpoint
 // unreachable, auth failure, field missing) as a comment rather than
 // silently emitting nothing — visible in data/logs and in a raw scrape,

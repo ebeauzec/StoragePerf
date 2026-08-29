@@ -108,6 +108,16 @@ type MetricDef struct {
 	Finding          map[string]string `yaml:"finding"`
 	Investigate      []string          `yaml:"investigate"`
 	Remediate        []string          `yaml:"remediate"`
+
+	// NodeBreakdownQuery is optional: a PromQL template (same {array}
+	// substitution as Query) that returns one series per node, each
+	// labeled `node`, for a metric whose Query collapses a multi-node
+	// system into one grid/cluster-wide number. When set, the panel this
+	// metric produces also carries a per-node breakdown — see
+	// config/thresholds/netapp_storagegrid.yml's use of it and
+	// internal/netappnative/storagegrid.go's `_by_node` metrics for where
+	// the underlying per-node series come from.
+	NodeBreakdownQuery string `yaml:"node_breakdown_query,omitempty"`
 }
 
 type thresholdsFile struct {

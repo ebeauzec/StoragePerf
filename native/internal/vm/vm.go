@@ -85,6 +85,30 @@ func (c *Client) InstantQuery(promql string) (float64, bool, error) {
 	return parseFloat(qr.Data.Result[0].Value[1]), true, nil
 }
 
+// LabeledPoint is one series' current value from an instant query that can
+// return multiple series (e.g. a `by (node)` grouping), paired with its
+// full label set so the caller can tell which series is which.
+type LabeledPoint struct {
+	Labels map[string]string
+	Value  float64
+}
+
+// InstantQueryVector is like InstantQuery but returns every series the
+// query produces, not just the first — for queries that intentionally
+// return more than one result (e.g. grouped `by (node)`), where the
+// caller needs each series' labels, not a single collapsed number.
+func (c *Client) InstantQueryVector(promql string) ([]LabeledPoint, error) {
+	qr, err := c.do("/api/v1/query", url.Values{"query": {promql}})
+	if err != nil {
+		return nil, err
+	}
+	pts := make([]LabeledPoint, 0, len(qr.Data.Result))
+	for _, r := range qr.Data.Result {
+		pts = append(pts, LabeledPoint{Labels: r.Metric, Value: parseFloat(r.Value[1])})
+	}
+	return pts, nil
+}
+
 // RangeQuery returns a time series for a PromQL expression between start
 // and end (unix seconds), evaluated every step.
 func (c *Client) RangeQuery(promql string, start, end time.Time, step time.Duration) ([]Point, error) {

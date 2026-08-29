@@ -156,10 +156,34 @@ function panelHtml(p, systemLabel) {
       <span class="panel-badge ${badgeClass}">${p.severity}</span>
     </div>
     <div class="panel-chart">${svgLine(p.series, { color, threshold: p.watch })}</div>
+    ${nodeBreakdownHtml(p)}
     <div class="panel-foot">
       <span class="threshold-tag">Best-practice ceiling: <b>${p.threshold_label}</b></span>
       <span>${RANGES.find((r) => r.hours === state.hours)?.label || ""} window</span>
     </div>
+  </div>`;
+}
+
+// nodeBreakdownHtml renders the per-node view a panel carries when its
+// underlying metric supports one (currently StorageGRID only — see
+// config.MetricDef.NodeBreakdownQuery) — answering "which node" for a
+// grid-wide number without a separate trip to Grid Manager. Nodes are
+// already sorted worst-first by the API; only rendered when present, so
+// this is a no-op for every other vendor's panels.
+function nodeBreakdownHtml(p) {
+  if (!p.nodes || !p.nodes.length) return "";
+  const digits = p.unit === "%" || p.unit.includes("errors") || p.unit.includes("per port") ? 0 : 2;
+  return `<div class="panel-nodes">
+    <div class="panel-nodes-label">By node</div>
+    ${p.nodes
+      .map(
+        (n) => `<div class="panel-node-row">
+      <span class="node-dot" style="background:${healthColor(n.severity)}"></span>
+      <span class="panel-node-name mono">${n.node}</span>
+      <span class="panel-node-value mono">${fmt(n.value, digits)}${p.unit === "%" ? "%" : ""}</span>
+    </div>`
+      )
+      .join("")}
   </div>`;
 }
 
