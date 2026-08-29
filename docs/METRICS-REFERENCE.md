@@ -191,6 +191,8 @@ driving it without a separate trip to Grid Manager. See
 implementation — this mechanism is vendor-agnostic and available to any
 future vendor's thresholds file, not StorageGRID-specific.
 
+![StorageGRID per-node breakdown — worst node first, per panel](images/storagegrid-node-breakdown.png)
+
 ---
 
 ## 7. How to Verify a Metric Name Yourself

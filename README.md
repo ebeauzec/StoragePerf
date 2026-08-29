@@ -16,6 +16,8 @@
 > vendor GUI, a different Grafana instance, and a different mental model per
 > platform.
 
+![Plumb fleet view — mixed Pure Storage and NetApp systems in one console](docs/images/fleet-overview.png)
+
 ---
 
 ## Table of Contents
@@ -271,6 +273,8 @@ threshold line overlaid, and the threshold label itself. A time-range picker
 (Realtime/15M/1H/24H/7D/30D/90D/1Y) controls both the charts and the Report/Export
 buttons above them.
 
+![Array Detail — Front-End and Back-End panels for one system](docs/images/array-detail-panels.png)
+
 For NetApp StorageGRID systems specifically, panels also show a **By node**
 breakdown — worst node first, color-coded by severity — so a grid-wide
 finding can be traced back to the specific Admin/Storage/Gateway node
@@ -278,11 +282,19 @@ driving it, instead of just knowing something on the grid is degraded. See
 [Metrics Reference §6](docs/METRICS-REFERENCE.md#6-netapp-storagegrid) for
 how this is collected.
 
+![StorageGRID per-node breakdown under each panel](docs/images/storagegrid-node-breakdown.png)
+
 ### Findings
 
 Every metric currently at watch or critical severity, plus the correlation
 finding when it applies, each tagged Front-End / Back-End / Fleet-wide and
-shown with its full written explanation — not just a color, a reason.
+shown with its full written explanation — not just a color, a reason. Click
+one with detail available to expand step-by-step investigation and
+remediation guidance in place.
+
+![Best-Practice Findings feed, including the correlation finding](docs/images/findings-correlation.png)
+
+![A finding expanded to show investigate/remediate steps](docs/images/finding-expanded.png)
 
 ### Config
 
@@ -292,6 +304,10 @@ dropdown. Saving regenerates Prometheus's scrape targets immediately, no
 restart required. Also shows the check-and-notify **Software & Reference
 Updates** panel and the **Data Retention** controls (current database size,
 retention period).
+
+![Config tab — mock data toggle and data retention controls](docs/images/config-tab-top.png)
+
+![Config tab — per-vendor array inventory fields](docs/images/config-array-inventory.png)
 
 ---
 
@@ -313,6 +329,15 @@ vendor publishes is clean. See
 for exactly how much confidence that carries per vendor — it's not the same
 for all four, and the finding's own text says so.
 
+Below: a real example — every front-end panel critical (latency, queue
+depth, network errors), every back-end panel clean (replication lag,
+capacity) — and the finding it produces, with its written reasoning and
+per-metric detail expanded.
+
+![Front-end critical, back-end clean — the panel pattern the correlation finding is built to catch](docs/images/array-detail-panels.png)
+
+![The resulting correlation finding, expanded](docs/images/finding-expanded.png)
+
 ---
 
 ## 7. Reports & Data Export
@@ -328,6 +353,8 @@ All three compute directly from VictoriaMetrics's stored history on request
 detail on how percentiles and trends are calculated, and how to read the
 generated analysis critically rather than at face value, is in
 [Reports & Data Export](docs/REPORTS.md).
+
+![Sample fleet report — every system ranked worst-first, one-paragraph narrative](docs/images/fleet-report-sample.png)
 
 ---
 

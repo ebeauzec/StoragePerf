@@ -38,6 +38,8 @@ This is the document to attach to a change ticket, send to an application
 owner, or keep as a dated record of a system's state during an incident
 window.
 
+![Sample array report — status summary, per-metric analysis, min/avg/p95/max table](images/array-report-sample.png)
+
 ## 2. Fleet Report
 
 **Endpoint:** `GET /api/reports/fleet?hours=N` (default 7 days)
@@ -55,6 +57,8 @@ This is the document for a weekly ops review or a "what needs attention
 across everything we run" check — it deliberately doesn't repeat each
 system's full metric detail (that's the array report's job); it exists to
 tell you *which* array report to open first.
+
+![Sample fleet report — every system ranked worst-first](images/fleet-report-sample.png)
 
 ## 3. CSV Export
 
