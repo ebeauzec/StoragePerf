@@ -96,15 +96,18 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 	return mux
 }
 
-// gridNodes returns a realistic, fixed 4-node StorageGRID topology for one
-// mock grid: an Admin Node, two Storage Nodes, and a Gateway Node — the
-// same node types a real deployment's per-node breakdown would show.
+// gridNodes returns a realistic, fixed 5-node StorageGRID topology for one
+// mock grid: one Admin Node, two Storage Nodes, and two Gateway Nodes —
+// the same mix of node types and roles a real deployment's per-node
+// breakdown would show, demonstrating that auto-discovery isn't limited to
+// one node per role.
 func gridNodes(arr mockdata.Array) []string {
 	return []string{
 		arr.ID + "-dc1-adm1",
 		arr.ID + "-dc1-s1",
 		arr.ID + "-dc1-s2",
-		arr.ID + "-dc1-g1",
+		arr.ID + "-dc1-gw1",
+		arr.ID + "-dc1-gw2",
 	}
 }
 
