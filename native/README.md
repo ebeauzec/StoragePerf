@@ -8,10 +8,43 @@ anything — unzip and run, on any platform.
 
 ## Using a released distribution
 
-1. Download `plumb-<version>-<os>_<arch>.(tar.gz|zip)` for your platform and extract it.
-2. Run `./plumb` (macOS/Linux) or double-click `start.bat` / `plumb.exe` (Windows).
-3. Open http://localhost:8000.
-4. Edit `config/arrays.yml` (or use the Config tab) to point it at your real systems.
+**Quickest: one command, auto-fetches the latest release.** From the repo
+root:
+
+```bash
+./run.sh          # macOS/Linux
+```
+```powershell
+.\run.ps1         # Windows (PowerShell)
+```
+
+**Manual, per OS** — download `plumb-<version>-<os>_<arch>.(tar.gz|zip)`
+for your platform from the
+[Releases page](https://github.com/ebeauzec/StoragePerf/releases/latest),
+extract it, then:
+
+| OS | Command |
+|---|---|
+| **macOS** | `./plumb` or `./start.sh` from inside the extracted folder (Terminal) |
+| **Linux** | `./plumb` or `./start.sh` from inside the extracted folder |
+| **Windows** | Double-click `start.bat`, or run `plumb.exe` directly, from inside the extracted folder |
+
+Either way: open **http://localhost:8000**, then edit `config/arrays.yml`
+(or use the **Config** tab) to point it at your real systems.
+
+macOS may show an "unidentified developer" warning, and Windows a
+SmartScreen warning, if the archive was downloaded via a browser rather
+than `run.sh`/`run.ps1` — `start.sh`/`start.bat` handle both
+automatically; see the root README's
+[Troubleshooting](../README.md#11-troubleshooting) section for the manual
+fix either way.
+
+If you're working from this same repo checkout rather than a fresh
+download, `native/latest/<os>_<arch>/` (when present) is a pre-extracted,
+always-current copy of the most recent build for every platform — run
+directly from there with no download or extraction step at all. It's
+`.gitignore`d and gets refreshed on every release, not something every
+clone of this repo will have.
 
 Everything Plumb writes — VictoriaMetrics's data, Prometheus's short-term
 buffer, logs, generated reports — lives under `data/` next to the

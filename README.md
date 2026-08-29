@@ -200,17 +200,26 @@ is fully self-contained.
 1. Download `plumb-<version>-<platform>.(tar.gz|zip)` for your OS from the
    [Releases page](https://github.com/ebeauzec/StoragePerf/releases/latest)
    — not "Source code (zip)", which is just this repo's source.
-2. Extract it, then:
+   - macOS: `plumb-<version>-darwin_arm64.tar.gz` (Apple Silicon) or
+     `plumb-<version>-darwin_amd64.tar.gz` (Intel)
+   - Linux: `plumb-<version>-linux_amd64.tar.gz` or
+     `plumb-<version>-linux_arm64.tar.gz`
+   - Windows: `plumb-<version>-windows_amd64.zip`
+2. Extract it, then run it:
 
-```bash
-cd plumb-<version>-<platform>
-./plumb        # or ./start.sh, or double-click start.bat on Windows
-```
+   | OS | Command |
+   |---|---|
+   | macOS / Linux | `cd plumb-<version>-<platform>` then `./plumb` or `./start.sh` |
+   | Windows | Open the extracted folder, double-click `start.bat` (or run `plumb.exe` directly) |
 
 If macOS still shows an "unidentified developer" warning (can happen with
 some browsers/archive tools), either right-click `plumb` → Open once, or
 run `xattr -dr com.apple.quarantine .` from inside the extracted folder
-before starting it — `start.sh` also does this automatically.
+before starting it — `start.sh` also does this automatically. If Windows
+shows a SmartScreen warning, run `start.bat` (it unblocks the `.exe`
+automatically) rather than double-clicking `plumb.exe` directly the first
+time — see [Troubleshooting](#11-troubleshooting) for the manual fix
+either way.
 
 Open **http://localhost:8000**. First run creates `config/arrays.yml` from
 the bundled example automatically. Edit that file (or use the **Config**
@@ -413,7 +422,8 @@ just a demo trick (see `internal/targets`).
 | **No data / panels show "no data yet"** | Not enough history collected yet, or the scrape target is down | Check `data/logs/prometheus.log` for target health; new deployments need a few collection cycles before charts populate |
 | **NetApp system shows no data** | Missing/incorrect credentials, wrong account permissions on the cluster/grid, or the array/grid unreachable from Plumb's host | Check `data/logs/prometheus.log` for the `/scrape/netapp/{id}` target's status; a raw scrape (`curl http://localhost:8000/scrape/netapp/<id>`) shows the exact per-metric error as a comment line |
 | **Config tab shows blank/undefined fields** | Old cached frontend | Hard-refresh the browser (Ctrl+Shift+R / Cmd+Shift+R) |
-| **macOS blocks the binary ("unidentified developer")** | Gatekeeper, since the binary isn't code-signed | System Settings → Privacy & Security → Allow Anyway, then run `./start.sh` again |
+| **macOS blocks the binary ("unidentified developer")** | Gatekeeper, since the binary isn't code-signed | System Settings → Privacy & Security → Allow Anyway, then run `./start.sh` again — or run `xattr -dr com.apple.quarantine .` from inside the extracted folder before starting it |
+| **Windows blocks the binary (SmartScreen "unrecognized app")** | Mark of the Web on a browser-downloaded, unsigned `.exe` | Run `start.bat` (it unblocks automatically), or manually: right-click `plumb.exe` → Properties → check "Unblock" → OK |
 | **Findings feed is empty** | Genuinely good news — no metric crossed a threshold in the current window | Check a longer time range if you expected to see history |
 | **Report/export returns "unknown array"** | Array ID mismatch | Confirm the `id` field in `arrays.yml` matches what you're querying — it's case-sensitive |
 | **Update checker never shows "up to date"** | `PLUMB_CHECK_FOR_UPDATES=false`, or no internet access | Check the Config tab's Software & Reference Updates panel for the exact status string |
