@@ -51,6 +51,42 @@ buffer, logs, generated reports — lives under `data/` next to the
 executable. Move the whole folder and it keeps working; nothing is written
 outside it.
 
+## Upgrading without losing data
+
+The one rule that makes an upgrade safe: everything that matters is three
+things sitting next to the executable — `data/` (the metrics database),
+`config/arrays.yml` (your real array inventory), and `config/settings.yml`
+(retention period, mock-mode preference). Everything else — the binary,
+the bundled sidecars, `config/thresholds/*.yml` — is disposable and should
+come from the new version, not be carried over.
+
+**Using `run.sh` / `run.ps1`:** just re-run it. Since v0.8.6+, both
+scripts move `data/`, `arrays.yml`, and `settings.yml` aside before
+replacing the install folder, then restore them into the freshly
+extracted version — the running instance ends up on the new code with
+its full history and real inventory intact, no manual steps. (Versions
+before that wiped everything on every upgrade — if you're upgrading a
+long-running pre-0.8.6 instance, do the manual steps below at least this
+once.)
+
+**Manual upgrade** (a fresh archive download, or `native/latest/`):
+
+1. Stop the currently-running instance.
+2. Extract the new version to a **new** folder — don't extract on top of
+   the old one.
+3. Move three things from the old install into the new folder, replacing
+   whatever the new archive shipped in their place:
+   - `data/` (the whole directory)
+   - `config/arrays.yml`
+   - `config/settings.yml`
+4. Start the new version from its own folder.
+
+That's it — nothing needs converting or migrating. VictoriaMetrics's
+on-disk format is stable across Plumb releases (Plumb doesn't touch it
+directly; it only ever talks to VictoriaMetrics over its HTTP API), and
+`arrays.yml`/`settings.yml` are plain YAML Plumb already knows how to
+read regardless of which release wrote them.
+
 ## Local development — always run the current source
 
 Don't extract a release archive to iterate on the code — that's a snapshot,

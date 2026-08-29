@@ -192,7 +192,11 @@ there's nothing for Gatekeeper to block. `run.ps1` explicitly unblocks
 everything before launching (Windows' "Mark of the Web"/SmartScreen is a
 different mechanism, and `Invoke-WebRequest` can still apply it), so
 there's no click-through warning there either. Re-running either script
-later reuses what's already installed unless a newer release is out.
+later reuses what's already installed unless a newer release is out — and
+when it is, your metrics database and real array inventory carry over
+automatically; see [Upgrading without losing data](native/README.md#upgrading-without-losing-data)
+for exactly what's preserved and the manual procedure for any other
+upgrade path.
 
 ### Manual path (any platform, or air-gapped/pilot sites with no internet)
 
