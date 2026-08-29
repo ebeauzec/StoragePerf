@@ -1,15 +1,22 @@
-// Package updates is check-and-notify only: it looks up newer releases of
-// the bundled sidecars and reports what it finds. It never downloads or
-// installs anything — this box sits next to production storage traffic, so
-// nothing here changes what's running without a human deciding to.
+// Package updates looks up newer releases of the bundled sidecars, vendor
+// metric-schema references, and Plumb itself, and reports what it finds.
+// It is check-and-notify only for the sidecars and vendor references —
+// this box sits next to production storage traffic, so nothing about them
+// changes what's running without a human deciding to. Plumb's own entry is
+// the one exception: internal/selfupdate can act on it, but only when a
+// user explicitly clicks "Update now" — this package itself still only
+// ever checks and reports.
 package updates
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"plumb/internal/selfupdate"
 )
 
 type Check struct {
@@ -30,12 +37,20 @@ type target struct {
 
 // current == "" marks an informational-only reference (no bundled binary,
 // no version comparison) — see the note attached to these in checkOnce.
-var targets = []target{
+// "plumb"'s current field is left blank here and filled in per-Checker by
+// NewChecker with the actual running version, since that's a runtime
+// value, not something this static list can hold.
+var baseTargets = []target{
+	{"plumb", "Plumb", selfupdate.Repo, ""},
 	{"prometheus", "Prometheus", "prometheus/prometheus", "v3.14.0"},
 	{"victoriametrics", "VictoriaMetrics", "VictoriaMetrics/VictoriaMetrics", "v1.150.0"},
 	{"pure_exporter_reference", "Pure metric-schema reference", "PureStorage-OpenConnect/pure-fa-openmetrics-exporter", ""},
 	{"harvest_reference", "NetApp Harvest metric-schema reference", "NetApp/harvest", ""},
 }
+
+// PlumbTargetID is targets[0].id above — used by the API layer to find
+// Plumb's own entry in a Snapshot() without hardcoding the string twice.
+const PlumbTargetID = "plumb"
 
 const thresholdsCheckedAgainst = "2026-08-27"
 
@@ -44,10 +59,24 @@ type Checker struct {
 	last    []Check
 	enabled bool
 	client  *http.Client
+	targets []target
 }
 
-func NewChecker(enabled bool) *Checker {
-	c := &Checker{enabled: enabled, client: &http.Client{Timeout: 10 * time.Second}}
+// NewChecker builds a checker for the sidecars, vendor references, and
+// Plumb itself — plumbVersion is the running binary's own version
+// (cmd/plumb's -ldflags-injected main.version), used as Plumb's "current"
+// for comparison against the latest GitHub release, the same way the
+// sidecars compare against their own hardcoded current versions.
+func NewChecker(enabled bool, plumbVersion string) *Checker {
+	targets := make([]target, len(baseTargets))
+	copy(targets, baseTargets)
+	for i := range targets {
+		if targets[i].id == PlumbTargetID {
+			targets[i].current = plumbVersion
+		}
+	}
+
+	c := &Checker{enabled: enabled, client: &http.Client{Timeout: 10 * time.Second}, targets: targets}
 	c.last = make([]Check, len(targets))
 	for i, t := range targets {
 		status := "not checked yet"
@@ -57,6 +86,21 @@ func NewChecker(enabled bool) *Checker {
 		c.last[i] = Check{ID: t.id, Label: t.label, Current: t.current, Status: status, URL: fmt.Sprintf("https://github.com/%s/releases", t.repo)}
 	}
 	return c
+}
+
+// PlumbCheck returns Plumb's own entry from the last check, and whether
+// checking is enabled at all — the API layer re-validates against this
+// before acting on a self-update request rather than trusting the
+// client's word that an update is available.
+func (c *Checker) PlumbCheck() (Check, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, chk := range c.last {
+		if chk.ID == PlumbTargetID {
+			return chk, c.enabled
+		}
+	}
+	return Check{}, c.enabled
 }
 
 func (c *Checker) Snapshot() (bool, []Check) {
@@ -99,9 +143,13 @@ func (c *Checker) fetchLatestTag(repo string) (string, error) {
 	return tags[0].Name, nil
 }
 
+func normalizeVersion(v string) string {
+	return strings.TrimPrefix(v, "v")
+}
+
 func (c *Checker) checkOnce() {
-	results := make([]Check, len(targets))
-	for i, t := range targets {
+	results := make([]Check, len(c.targets))
+	for i, t := range c.targets {
 		chk := Check{ID: t.id, Label: t.label, Current: t.current, URL: fmt.Sprintf("https://github.com/%s/releases", t.repo)}
 		now := time.Now().Unix()
 		chk.CheckedAt = &now
@@ -113,7 +161,14 @@ func (c *Checker) checkOnce() {
 			chk.Latest = &latest
 			chk.Status = "ok"
 			if t.current != "" {
-				avail := latest != t.current
+				// Plain != would always report "update available" for
+				// Plumb specifically: GitHub tags this repo "v0.8.6", but
+				// the embedded binary version (main.version, from the bare
+				// VERSION file) is "0.8.6" with no "v". The sidecars'
+				// hardcoded "current" strings already include their own
+				// "v" prefix matching their upstream tags, so normalizing
+				// both sides is a no-op for them and the fix for Plumb.
+				avail := normalizeVersion(latest) != normalizeVersion(t.current)
 				chk.UpdateAvailable = &avail
 			}
 		}

@@ -480,13 +480,20 @@ function updateRowHtml(u) {
       : u.update_available === false
       ? '<span class="update-badge chip-good" style="background:rgba(62,203,122,0.12);color:var(--good);">Up to date</span>'
       : '<span class="update-badge" style="background:rgba(140,150,165,0.1);color:var(--text-dim);">' + (u.status || "unknown") + "</span>";
+  // Plumb is the one row that can actually be acted on — every other
+  // check here (sidecars, vendor metric-schema references) stays purely
+  // informational, per the panel's own "check-and-notify" promise.
+  const updateButton =
+    u.id === "plumb" && u.update_available === true
+      ? `<button class="btn btn-primary" data-self-update="${u.latest}" style="margin-left:10px;">Update now</button>`
+      : "";
   return `<div class="update-row">
     <div>
       <div class="update-name">${u.label}</div>
       <div class="update-versions">shipped: ${u.current || "—"} ${u.latest ? "· latest seen: " + u.latest : ""}</div>
       ${u.note ? `<div class="update-note">${u.note}</div>` : ""}
     </div>
-    ${badge}
+    <div style="display:flex; align-items:center;">${badge}${updateButton}</div>
   </div>`;
 }
 
@@ -508,6 +515,63 @@ async function renderUpdatesRows() {
   } catch (e) {
     document.getElementById("updates-rows").innerHTML = `<div class="empty-note">Could not load update status (${e.message}).</div>`;
   }
+}
+
+// Delegated on the container (not per-button) since renderUpdatesRows()
+// replaces #updates-rows' innerHTML wholesale on every 5-minute refresh —
+// a listener attached directly to a button would be gone by the time
+// anyone actually clicked it.
+document.getElementById("updates-rows").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-self-update]");
+  if (!btn) return;
+  const targetVersion = btn.dataset.selfUpdate;
+  btn.disabled = true;
+  btn.textContent = "Downloading…";
+  // Captured before the click so waitForRestart can detect "the version
+  // actually changed" without needing to string-match GitHub's "v0.8.6"
+  // tag against /api/version's bare "0.8.6" (different, deliberately —
+  // see normalizeVersion in internal/updates).
+  let priorVersion;
+  try {
+    priorVersion = (await api("/api/version")).version;
+  } catch (e) {
+    priorVersion = undefined;
+  }
+  try {
+    await api("/api/self-update", { method: "POST" });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Update now";
+    alert(`Update failed: ${err.message}\n\nNothing was changed — this instance is still running normally.`);
+    return;
+  }
+  btn.textContent = "Restarting…";
+  document.getElementById("live-label").textContent = `Updating to ${targetVersion} — reconnecting…`;
+  document.getElementById("live-dot").classList.add("bad");
+  waitForRestart(priorVersion);
+});
+
+// Polls until a response comes back reporting a version different from
+// the one that was running before the click, or a reasonable window
+// elapses. The old process is shutting down and the new one is
+// retry-binding the same port (see main.go's listenWithRetry), so a
+// handful of failed requests right after the click is the expected,
+// healthy path, not an error.
+async function waitForRestart(priorVersion) {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const v = await api("/api/version");
+      if (v.version && v.version !== priorVersion) {
+        location.reload();
+        return;
+      }
+    } catch (e) {
+      // still down between the old process exiting and the new one binding — keep polling
+    }
+  }
+  document.getElementById("live-label").textContent = "Update is taking longer than expected — check data/logs/plumb.log in the new install directory";
 }
 
 document.getElementById("add-array").addEventListener("click", () => {

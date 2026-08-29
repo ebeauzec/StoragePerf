@@ -124,6 +124,33 @@ func (v *vmSupervisor) start(retentionPeriod string) {
 	go proc.Run(ctx)
 }
 
+// listenWithRetry binds addr, retrying with backoff for up to maxWait
+// before giving up. Normally binds on the first attempt — this exists for
+// the self-update handoff (internal/selfupdate), where a freshly spawned
+// new-version process starts and races the old one for this exact port:
+// the old process is still gracefully shutting down and hasn't released
+// it yet. A genuinely misconfigured deployment (something else already
+// squatting on the port) just takes up to maxWait longer to report that
+// fatal error — an acceptable tradeoff for making the handoff work
+// without the two processes needing to coordinate directly.
+func listenWithRetry(addr string, maxWait time.Duration) (net.Listener, error) {
+	deadline := time.Now().Add(maxWait)
+	backoff := 200 * time.Millisecond
+	for {
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			return ln, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, err
+		}
+		time.Sleep(backoff)
+		if backoff *= 2; backoff > 2*time.Second {
+			backoff = 2 * time.Second
+		}
+	}
+}
+
 func main() {
 	layout, err := paths.Resolve()
 	if err != nil {
@@ -184,10 +211,11 @@ func main() {
 	go promProc.Run(ctx)
 
 	// --- initial config-derived generation (Prometheus scrape targets) ---
-	updateChecker := updates.NewChecker(os.Getenv("PLUMB_CHECK_FOR_UPDATES") != "false")
+	updateChecker := updates.NewChecker(os.Getenv("PLUMB_CHECK_FOR_UPDATES") != "false", version)
 
 	app := &api.App{
 		Version:     version,
+		Root:        layout.Root,
 		ConfigDir:   layout.Config,
 		DataDir:     layout.Data,
 		TargetsPath: targetsPath,
@@ -196,6 +224,7 @@ func main() {
 		Updates:     updateChecker,
 		Frontend:    webFS(),
 		RestartVM:   vmSup.start,
+		Shutdown:    stop,
 		ONTAP:       netappnative.NewONTAPCollector(),
 		StorageGrid: netappnative.NewStorageGridCollector(),
 		MockBackend: mockbackend.New(),
@@ -229,7 +258,7 @@ func main() {
 	log.Printf("Plumb %s starting — %d array(s) configured, data dir: %s", version, len(arrays), layout.Data)
 	log.Printf("open http://localhost:%s", listenPort)
 
-	ln, err := net.Listen("tcp", srv.Addr)
+	ln, err := listenWithRetry(srv.Addr, 20*time.Second)
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}

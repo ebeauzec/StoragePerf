@@ -22,6 +22,7 @@ import (
 	"plumb/internal/report"
 	"plumb/internal/rules"
 	"plumb/internal/scrapeproxy"
+	"plumb/internal/selfupdate"
 	"plumb/internal/targets"
 	"plumb/internal/updates"
 	"plumb/internal/vm"
@@ -29,6 +30,7 @@ import (
 
 type App struct {
 	Version     string // set via -ldflags at build time — see cmd/plumb/main.go
+	Root        string // directory containing the running executable (paths.Layout.Root) — where a self-update installs its sibling directory
 	ConfigDir   string
 	DataDir     string // base data/ dir — used to size up the VictoriaMetrics storage subdir for the Config tab
 	TargetsPath string
@@ -37,6 +39,7 @@ type App struct {
 	Updates     *updates.Checker
 	Frontend    fs.FS
 	RestartVM   func(retentionPeriod string) // notifies main to restart VictoriaMetrics with a new -retentionPeriod
+	Shutdown    func()                       // triggers main's graceful shutdown (server + sidecars) — see handleSelfUpdate
 	ONTAP       *netappnative.ONTAPCollector
 	StorageGrid *netappnative.StorageGridCollector
 	MockBackend *mockbackend.Backend
@@ -411,6 +414,60 @@ func (a *App) handleUpdates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"enabled": enabled, "checks": checks})
 }
 
+// handleSelfUpdate is Plumb's one exception to "check-and-notify only" —
+// see internal/selfupdate's doc comment for the full safety story. This
+// handler only ever runs in response to an explicit click; nothing here
+// fires on a timer or without a request.
+func (a *App) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
+	if a.Version == "dev" {
+		httpError(w, 400, fmt.Errorf("self-update isn't meaningful for a dev build (no matching release to compare against)"))
+		return
+	}
+	plumbCheck, enabled := a.Updates.PlumbCheck()
+	if !enabled {
+		httpError(w, 400, fmt.Errorf("update checking is disabled (PLUMB_CHECK_FOR_UPDATES=false)"))
+		return
+	}
+	if plumbCheck.UpdateAvailable == nil || !*plumbCheck.UpdateAvailable {
+		httpError(w, 400, fmt.Errorf("no update available — last checked version is %s", a.Version))
+		return
+	}
+	if a.Shutdown == nil {
+		httpError(w, 500, fmt.Errorf("self-update not wired up"))
+		return
+	}
+
+	// A real download (tens of MB) needs a much longer timeout than the
+	// 10s used for the lightweight version-check requests elsewhere —
+	// deliberately a fresh client, not a.Updates' own.
+	longClient := &http.Client{Timeout: 5 * time.Minute}
+
+	rel, err := selfupdate.FetchLatest(longClient)
+	if err != nil {
+		httpError(w, 502, fmt.Errorf("checking latest release: %w", err))
+		return
+	}
+	newRoot, err := selfupdate.Apply(longClient, a.Root, rel)
+	if err != nil {
+		httpError(w, 502, fmt.Errorf("applying update: %w", err))
+		return
+	}
+	if err := selfupdate.StartAndHandoff(newRoot); err != nil {
+		httpError(w, 502, fmt.Errorf("starting new version: %w", err))
+		return
+	}
+
+	writeJSON(w, map[string]any{"status": "restarting", "new_version": rel.Tag})
+
+	// The new process is already starting and will retry-bind this port
+	// until it succeeds (see main.go) — give this response time to reach
+	// the client before tearing this process down.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		a.Shutdown()
+	}()
+}
+
 func (a *App) handleExport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	window := parseHours(r, 24)
@@ -572,6 +629,7 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("PUT /api/config/settings", a.handlePutSettings)
 	mux.HandleFunc("GET /api/version", a.handleVersion)
 	mux.HandleFunc("GET /api/updates", a.handleUpdates)
+	mux.HandleFunc("POST /api/self-update", a.handleSelfUpdate)
 	mux.HandleFunc("GET /api/export/{id}", a.handleExport)
 	mux.HandleFunc("GET /api/backup", a.handleBackup)
 	mux.HandleFunc("GET /api/reports/array/{id}", a.handleArrayReport)

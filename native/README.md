@@ -60,6 +60,23 @@ things sitting next to the executable — `data/` (the metrics database),
 the bundled sidecars, `config/thresholds/*.yml` — is disposable and should
 come from the new version, not be carried over.
 
+**From inside the app (recommended):** the Config tab's Software &
+Reference Updates panel checks Plumb's own version against GitHub the
+same way it already checks Prometheus/VictoriaMetrics/vendor references.
+When a newer release exists, an **Update now** button appears on that
+row — click it and Plumb downloads the new version, carries over `data/`,
+`arrays.yml`, and `settings.yml` into a fresh sibling install directory
+(`plumb-<version>-update/`, next to the current one), launches it, and
+hands off the port once the old process shuts down. The browser
+reconnects on its own once the new version answers. This is the one
+thing in that panel that isn't purely check-and-notify — see
+`internal/selfupdate`'s doc comment for exactly what it does and doesn't
+verify before running a new binary, and its safety properties (the old
+install directory is never touched, so a bad update is trivially
+reversible: stop the new process, start the old one from where it still
+sits). `PLUMB_CHECK_FOR_UPDATES=false` disables checking *and* this
+button together, for air-gapped or high-security sites.
+
 **Using `run.sh` / `run.ps1`:** just re-run it. Since v0.8.6+, both
 scripts move `data/`, `arrays.yml`, and `settings.yml` aside before
 replacing the install folder, then restore them into the freshly
