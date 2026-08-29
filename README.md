@@ -170,16 +170,41 @@ provision — see [native/README.md](native/README.md).
 
 ## 4. Getting Started
 
-### Native build (recommended — zero install)
+### Fastest path: download the repo, run one script (macOS/Linux)
+
+```bash
+# From a "Download ZIP" of this repo, unzipped, or a git clone:
+./run.sh
+```
+
+This fetches the latest released binary for your platform straight from
+GitHub (via `curl`, not a browser) and starts it — no Docker, Python, Node,
+or Go toolchain required, and nothing for Gatekeeper to block: files
+fetched by `curl` never get macOS's quarantine tag in the first place,
+since only browser/Finder downloads are tagged that way. Re-running
+`./run.sh` later reuses what's already installed unless a newer release is
+out. Windows: see the manual path below (SmartScreen uses a different
+mechanism than Gatekeeper; `start.bat` handles it).
+
+### Manual path (any platform, or air-gapped/pilot sites with no internet)
 
 **Prerequisites:** none. Not Docker, not Python, not Node — the executable
 is fully self-contained.
 
+1. Download `plumb-<version>-<platform>.(tar.gz|zip)` for your OS from the
+   [Releases page](https://github.com/ebeauzec/StoragePerf/releases/latest)
+   — not "Source code (zip)", which is just this repo's source.
+2. Extract it, then:
+
 ```bash
-# Extract the archive for your platform (native/dist/), then:
 cd plumb-<version>-<platform>
 ./plumb        # or ./start.sh, or double-click start.bat on Windows
 ```
+
+If macOS still shows an "unidentified developer" warning (can happen with
+some browsers/archive tools), either right-click `plumb` → Open once, or
+run `xattr -dr com.apple.quarantine .` from inside the extracted folder
+before starting it — `start.sh` also does this automatically.
 
 Open **http://localhost:8000**. First run creates `config/arrays.yml` from
 the bundled example automatically. Edit that file (or use the **Config**

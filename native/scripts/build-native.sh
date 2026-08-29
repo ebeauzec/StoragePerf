@@ -64,12 +64,26 @@ for row in "${TARGETS[@]}"; do
   if [ "$os" = "windows" ]; then
     cat > "$outdir/start.bat" <<'EOF'
 @echo off
+rem Files downloaded via a browser get marked with Windows' "Mark of the
+rem Web", which triggers a SmartScreen warning on first run of an
+rem unsigned executable. Unblock-File strips that mark before we launch,
+rem so double-clicking this script doesn't hit that prompt. Harmless if
+rem it's already unblocked or PowerShell/policy prevents it.
+powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0' -Recurse | Unblock-File" >nul 2>&1
 plumb.exe
 EOF
   else
     cat > "$outdir/start.sh" <<'EOF'
 #!/usr/bin/env bash
 cd "$(dirname "${BASH_SOURCE[0]}")"
+# Files downloaded via a browser get tagged with macOS's
+# com.apple.quarantine attribute, which makes Gatekeeper block an
+# unsigned binary with an "unidentified developer" prompt. Strip it
+# before launching so that doesn't happen — harmless no-op if the
+# archive was fetched some other way (e.g. curl) and was never tagged.
+if command -v xattr >/dev/null 2>&1; then
+  xattr -dr com.apple.quarantine . 2>/dev/null || true
+fi
 # exec, not a plain call: this replaces the shell with plumb (same PID)
 # instead of running it as a child — otherwise killing/Ctrl+C-ing this
 # script leaves plumb (and its own sidecar children) running as orphans.
