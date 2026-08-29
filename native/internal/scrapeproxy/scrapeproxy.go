@@ -44,10 +44,20 @@ func Handler(lookup Lookup) http.HandlerFunc {
 		}
 		url := fmt.Sprintf("%s://%s%s", scheme, arr.Host, path)
 
+		// DisableKeepAlives: this Client/Transport is built fresh for every
+		// single scrape (every ~15s per array) and discarded right after —
+		// there's no reuse across calls for keep-alive to help with. A
+		// bespoke *http.Transport's IdleConnTimeout zero-value means "never
+		// time out," so without this, every scrape leaked one established,
+		// permanently-idle TCP connection that neither side ever closed —
+		// confirmed live via lsof showing 10k+ ESTABLISHED loopback
+		// connections after several hours, exhausting the process's file
+		// descriptors and breaking every listener's accept().
 		client := &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: !arr.VerifyTLS},
+				TLSClientConfig:   &tls.Config{InsecureSkipVerify: !arr.VerifyTLS},
+				DisableKeepAlives: true,
 			},
 		}
 		req, err := http.NewRequest("GET", url, nil)

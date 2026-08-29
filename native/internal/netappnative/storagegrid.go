@@ -36,9 +36,17 @@ func NewStorageGridCollector() *StorageGridCollector {
 }
 
 func (c *StorageGridCollector) client(arr config.Array) *http.Client {
+	// DisableKeepAlives: a fresh Client/Transport is built for every scrape
+	// (~15s per array) and discarded right after — no reuse for keep-alive
+	// to help with. A bespoke *http.Transport's IdleConnTimeout zero-value
+	// means "never time out," so without this, every scrape (and this
+	// collector issues several per scrape — one per metric, plus the
+	// per-node breakdown queries) leaked one permanently-idle established
+	// connection neither side ever closed — confirmed live via lsof after
+	// several hours of uptime.
 	return &http.Client{
 		Timeout:   10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: arr.UseInsecureTLS}},
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: arr.UseInsecureTLS}, DisableKeepAlives: true},
 	}
 }
 
