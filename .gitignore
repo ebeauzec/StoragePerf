@@ -2,6 +2,7 @@
 # and scripts/, don't commit them (large binaries, platform-specific).
 /dist/
 /native/dist/
+/native/latest/
 /native/sidecars/
 /native/data/
 /native/.demo-venv/

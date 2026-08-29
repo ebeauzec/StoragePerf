@@ -170,21 +170,27 @@ provision — see [native/README.md](native/README.md).
 
 ## 4. Getting Started
 
-### Fastest path: download the repo, run one script (macOS/Linux)
+### Fastest path: download the repo, run one script (macOS/Linux/Windows)
 
 ```bash
-# From a "Download ZIP" of this repo, unzipped, or a git clone:
+# macOS/Linux — from a "Download ZIP" of this repo, unzipped, or a git clone:
 ./run.sh
 ```
 
-This fetches the latest released binary for your platform straight from
-GitHub (via `curl`, not a browser) and starts it — no Docker, Python, Node,
-or Go toolchain required, and nothing for Gatekeeper to block: files
-fetched by `curl` never get macOS's quarantine tag in the first place,
-since only browser/Finder downloads are tagged that way. Re-running
-`./run.sh` later reuses what's already installed unless a newer release is
-out. Windows: see the manual path below (SmartScreen uses a different
-mechanism than Gatekeeper; `start.bat` handles it).
+```powershell
+# Windows — same repo, PowerShell:
+.\run.ps1
+```
+
+Either one fetches the latest released binary for your platform straight
+from GitHub and starts it — no Docker, Python, Node, or Go toolchain
+required. `run.sh` uses `curl`, which never triggers macOS's quarantine
+tag in the first place (only browser/Finder downloads are tagged), so
+there's nothing for Gatekeeper to block. `run.ps1` explicitly unblocks
+everything before launching (Windows' "Mark of the Web"/SmartScreen is a
+different mechanism, and `Invoke-WebRequest` can still apply it), so
+there's no click-through warning there either. Re-running either script
+later reuses what's already installed unless a newer release is out.
 
 ### Manual path (any platform, or air-gapped/pilot sites with no internet)
 

@@ -24,9 +24,9 @@ case "$os" in
   Darwin) platform_os=darwin ;;
   Linux) platform_os=linux ;;
   *)
-    echo "This launcher supports macOS and Linux. On Windows, download" >&2
-    echo "plumb-<version>-windows_amd64.zip directly from:" >&2
-    echo "  https://github.com/$REPO/releases/latest" >&2
+    echo "This is the macOS/Linux launcher. On Windows, run run.ps1 instead" >&2
+    echo "(same repo root) — or download plumb-<version>-windows_amd64.zip" >&2
+    echo "directly from https://github.com/$REPO/releases/latest" >&2
     exit 1
     ;;
 esac
