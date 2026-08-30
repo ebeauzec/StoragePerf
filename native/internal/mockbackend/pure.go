@@ -146,6 +146,10 @@ func writeFlashArrayMetrics(w http.ResponseWriter, arr mockdata.Array, counters 
 	lagSec := arr.CurrentValue("replication_lag", arr.ID+"|replication_lag", "backend", 90, 180, now)
 	fprintGauge(w, "purefa_pod_replica_links_lag_average_msec", "FlashArray pod replica links average lag in milliseconds", `{pod="dr-secondary"}`, lagSec*1000)
 
+	// replication_bandwidth: sum(...) / 1e6, thresholds in MB/s -> emit bytes/sec.
+	replMBs := arr.CurrentValue("replication_bandwidth", arr.ID+"|replication_bandwidth", "backend", 1000, 2000, now)
+	fprintGauge(w, "purefa_pod_replica_links_performance_bandwidth_bytes", "FlashArray pod replica links bandwidth in bytes per second", `{remote="dr-target",local_pod="prod-pod",remote_pod="dr-secondary",direction="in",dimension="bytes_per_sec_total"}`, replMBs*1000000)
+
 	// pool_saturation: avg(...), already a percent, no conversion.
 	sat := arr.CurrentValue("pool_saturation", arr.ID+"|pool_saturation", "backend", 75, 85, now)
 	fprintGauge(w, "purefa_array_space_utilization", "FlashArray array space utilization in percent", "", sat)

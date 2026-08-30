@@ -80,11 +80,18 @@ func (a *App) monitorOnce() {
 			log.Printf("[monitor] evaluating %s: %v", arr.ID, err)
 			continue
 		}
+		// Sourced from res.Findings, not res.Panels directly — a panel with
+		// a NodeBreakdownQuery can have a node genuinely worse than its own
+		// fleet-wide average (rules.BuildFindings' node-level finding
+		// block), and that node-level finding's MetricID/Severity are what
+		// need to reach the findings store and webhook, not just the
+		// panel's own (masked) severity.
 		var current []findingstore.CurrentFinding
-		for _, p := range res.Panels {
-			if p.Severity == rules.Watch || p.Severity == rules.Critical {
-				current = append(current, findingstore.CurrentFinding{MetricID: p.ID, Label: p.Label, Severity: string(p.Severity)})
+		for _, f := range res.Findings {
+			if f.MetricID == "" || (f.Severity != rules.Watch && f.Severity != rules.Critical) {
+				continue // the cross-panel correlation findings have no MetricID and aren't per-metric state to track
 			}
+			current = append(current, findingstore.CurrentFinding{MetricID: f.MetricID, Label: f.Title, Severity: string(f.Severity)})
 		}
 		newOrEscalated, resolved, err := a.Findings.Reconcile(arr.ID, arr.Name, arr.Vendor, current, now)
 		if err != nil {

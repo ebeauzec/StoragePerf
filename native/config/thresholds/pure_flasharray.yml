@@ -287,13 +287,43 @@ metrics:
       watch: "Replication lag is averaging {value:.0f}s, above the {threshold:.0f}s illustrative target."
       critical: "Replication lag is averaging {value:.0f}s — recovery point objective is at risk if this persists."
     investigate:
-      - "Check the WAN/replication link's throughput and utilization between source and target arrays for the same window."
+      - "Check the replication_bandwidth panel below for the same window — rising lag with flat bandwidth suggests the link is saturated; rising lag with rising bandwidth suggests the source write rate is simply outpacing steady-state capacity."
       - "Confirm the target array's own health and capacity — a slow or full target array causes lag on every source relationship."
       - "Review the write change rate on the source during the lag window — a burst of writes can outpace steady-state replication bandwidth."
     remediate:
       - "If the replication link itself is saturated, increase bandwidth or schedule heavy replication-driving workloads outside peak hours."
       - "If the target array is the bottleneck, address its performance/capacity directly — treat it as its own array in this dashboard."
       - "Review Pure's recommended replication link sizing for your write change rate and adjust if consistently undersized."
+
+  - id: replication_bandwidth
+    category: backend
+    label: "Replication Bandwidth"
+    unit: "MB/s"
+    # purefa_pod_replica_links_performance_bandwidth_bytes is real and
+    # confirmed directly from the exporter's own source
+    # (internal/openmetrics-exporter/pod_replica_links_performance_collector.go
+    # in PureStorage-OpenConnect/pure-fa-openmetrics-exporter — this metric
+    # doesn't appear in the project's own specification/metrics/purefa-metrics.md
+    # doc, which marks its pod-metrics section "TODO", so the collector
+    # source is the only place this is actually documented). `dimension`
+    # is `bytes_per_sec_from_remote` / `bytes_per_sec_to_remote` /
+    # `bytes_per_sec_total`, summed across every replica link on the array.
+    # Workload characterization, same framing as the IOPS/bandwidth panels
+    # elsewhere in this file — the point is correlating against
+    # replication_lag above, not an alert to tune on its own.
+    query: 'sum(purefa_pod_replica_links_performance_bandwidth_bytes{array="{array}",dimension="bytes_per_sec_total"}) / 1000000'
+    comparison: gt
+    severity_watch: 1000
+    severity_critical: 2000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Replication bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Replication bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "Correlate against replication_lag above — bandwidth pegged near the link's known capacity while lag climbs points at the link, not the array."
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flasharray.yml with a value derived from this array's own observed normal range, or from the replication link's actual provisioned capacity."
 
   - id: pool_saturation
     category: backend

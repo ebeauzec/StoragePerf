@@ -104,9 +104,78 @@ func narrate(s rules.Stats) MetricNarrative {
 		} else if s.TrendPct <= -15 {
 			text += fmt.Sprintf(" It trended down %.0f%% over the period, an improving direction.", -s.TrendPct)
 		}
+		if proj := capacityProjection(s); proj != "" {
+			text += " " + proj
+		}
+		// A metric that crossed watch/critical and came back multiple times
+		// reads identically to one long stretch in WatchPct/CriticalPct alone
+		// — but they point to different causes: recurring (a scheduled job,
+		// an intermittent link fault) vs. one steady condition. Only worth
+		// saying when there's more than one episode; "it happened once" is
+		// already implied by the sentences above.
+		if s.Episodes >= 2 && (s.WatchPct > 0 || s.CriticalPct > 0) {
+			text += fmt.Sprintf(" That time was spread across %d separate episodes, not one continuous stretch — worth checking for a recurring trigger (a scheduled job, an intermittent link issue) behind each one.", s.Episodes)
+		}
 	}
 
 	return MetricNarrative{Stats: s, Severity: sev, Analysis: text}
+}
+
+// isCapacityMetric identifies the metrics where a linear "days until
+// threshold" projection is actually a sound thing to say — a capacity
+// value climbing steadily toward full is a genuinely linear-ish process
+// over a period; a latency or IOPS panel spiking 20% isn't, and
+// projecting a "days until critical" for one would be a confident-sounding
+// number built on a shaky premise.
+func isCapacityMetric(id string) bool {
+	switch id {
+	case "pool_saturation", "aggr_capacity", "storage_capacity":
+		return true
+	}
+	return false
+}
+
+// capacityProjection extrapolates the same first-quarter-vs-last-quarter
+// rate already computed for the trend sentence into a "days until
+// threshold" estimate — the trend sentence says "up 12% this period," this
+// says what that means in practice. Deliberately conservative: only fires
+// when already above watch (a full-range metric climbing from 5% to 8% is
+// not yet a capacity-planning conversation) and gives the reader the
+// caveat every linear projection needs — real growth is rarely linear —
+// rather than presenting it as a firm prediction.
+func capacityProjection(s rules.Stats) string {
+	if !isCapacityMetric(s.MetricID) || s.TrendSpanSeconds <= 0 {
+		return ""
+	}
+	if s.LastQuarterAvg < s.SeverityWatch || s.SeverityCritical <= s.LastQuarterAvg {
+		return "" // not yet elevated, or already past critical — a projection adds nothing here
+	}
+	ratePerDay := (s.LastQuarterAvg - s.FirstQuarterAvg) / s.TrendSpanSeconds * 86400
+	if ratePerDay <= 0 {
+		return "" // flat or falling — no threshold to project toward
+	}
+	days := (s.SeverityCritical - s.LastQuarterAvg) / ratePerDay
+	if days <= 0 || days > 3650 {
+		return "" // already past it, or the rate is too slow to be a meaningful number
+	}
+	return fmt.Sprintf(
+		"At the rate it grew over this period, it would reach the %.0f%s critical threshold in roughly %s — a linear projection from a short window, not a guarantee, but worth planning around if the trend holds.",
+		s.SeverityCritical, s.Unit, humanDays(days))
+}
+
+// humanDays renders a day count the way a capacity-planning conversation
+// actually uses it — "3 weeks," not "21.4 days."
+func humanDays(days float64) string {
+	switch {
+	case days < 2:
+		return "1 day"
+	case days < 14:
+		return fmt.Sprintf("%.0f days", days)
+	case days < 60:
+		return fmt.Sprintf("%.0f weeks", days/7)
+	default:
+		return fmt.Sprintf("%.0f months", days/30)
+	}
 }
 
 // humanDuration renders a duration the way a reader estimating "how much

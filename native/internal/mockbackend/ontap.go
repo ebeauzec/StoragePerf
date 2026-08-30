@@ -45,13 +45,23 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 	})
 
 	mux.HandleFunc("GET /api/cluster/nodes", func(w http.ResponseWriter, r *http.Request) {
-		// node_cpu_busy: display = delta(raw)/delta(base)*100.
-		pct := arr.CurrentValue("node_cpu_busy", arr.ID+"|node_cpu_busy", "backend", 70, 85, time.Now())
-		raw := counters.accumulate(arr.ID+"|cpu_raw", pct)
-		base := counters.accumulate(arr.ID+"|cpu_base", 100)
+		// node_cpu_busy: display = delta(raw)/delta(base)*100 per node, then
+		// summed across nodes for the cluster-wide average — two nodes, one
+		// carrying the array's real severity and one always healthy, so the
+		// demo actually shows the masking problem node_breakdown_query fixes:
+		// a hot node-1 averaged against a quiet node-2 can land the
+		// cluster-wide number in a lower band than either node alone tells you.
+		now := time.Now()
+		pct1 := arr.CurrentValue("node_cpu_busy", arr.ID+"|node_cpu_busy", "backend", 70, 85, now)
+		pct2 := arr.ValueForSeverity(arr.ID+"|node_cpu_busy|node-2", "healthy", 70, 85, now)
+		raw1 := counters.accumulate(arr.ID+"|cpu_raw|node-1", pct1)
+		base1 := counters.accumulate(arr.ID+"|cpu_base|node-1", 100)
+		raw2 := counters.accumulate(arr.ID+"|cpu_raw|node-2", pct2)
+		base2 := counters.accumulate(arr.ID+"|cpu_base|node-2", 100)
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
-				{"statistics": map[string]any{"processor_utilization_raw": raw, "processor_utilization_base": base}},
+				{"name": arr.ID + "-node-1", "statistics": map[string]any{"processor_utilization_raw": raw1, "processor_utilization_base": base1}},
+				{"name": arr.ID + "-node-2", "statistics": map[string]any{"processor_utilization_raw": raw2, "processor_utilization_base": base2}},
 			},
 		})
 	})
@@ -65,6 +75,18 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
 				{"space": map[string]any{"block_storage": map[string]any{"size": size, "used": size * pct / 100}}},
+			},
+		})
+	})
+
+	mux.HandleFunc("GET /api/private/cli/snapmirror", func(w http.ResponseWriter, r *http.Request) {
+		// snapmirror_bandwidth: rate(...)/1e6, thresholds in MB/s -> accumulate
+		// a raw cumulative byte counter, same pattern as nic_errors.
+		mbps := arr.CurrentValue("snapmirror_bandwidth", arr.ID+"|snapmirror_bandwidth", "backend", 500, 1000, time.Now())
+		total := counters.accumulate(arr.ID+"|snapmirror_bytes", mbps*1000000)
+		writeJSON(w, map[string]any{
+			"records": []map[string]any{
+				{"relationship_id": "dr-secondary", "total_transfer_bytes": total},
 			},
 		})
 	})
@@ -108,10 +130,18 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 
 	mux.HandleFunc("GET /api/cluster/counter/tables/disk:constituent/rows", func(w http.ResponseWriter, r *http.Request) {
 		// aggr_disk_busy: display = avg over disks of delta(busy)/delta(denom)*100.
-		pct := arr.CurrentValue("aggr_disk_busy", arr.ID+"|aggr_disk_busy", "backend", 70, 85, time.Now())
-		records := make([]map[string]any, 0, 2)
-		for _, disk := range []string{"disk-1", "disk-2"} {
-			busy := counters.accumulate(arr.ID+"|"+disk+"|busy", pct)
+		// disk-1 carries the array's real severity, disk-2/3 stay healthy —
+		// same masking demo as node_cpu_busy above: one busy disk averaged
+		// against healthy ones can hide below the fleet-wide threshold.
+		now := time.Now()
+		pcts := map[string]float64{
+			"disk-1": arr.CurrentValue("aggr_disk_busy", arr.ID+"|aggr_disk_busy", "backend", 70, 85, now),
+			"disk-2": arr.ValueForSeverity(arr.ID+"|aggr_disk_busy|disk-2", "healthy", 70, 85, now),
+			"disk-3": arr.ValueForSeverity(arr.ID+"|aggr_disk_busy|disk-3", "healthy", 70, 85, now),
+		}
+		records := make([]map[string]any, 0, len(pcts))
+		for _, disk := range []string{"disk-1", "disk-2", "disk-3"} {
+			busy := counters.accumulate(arr.ID+"|"+disk+"|busy", pcts[disk])
 			denom := counters.accumulate(arr.ID+"|"+disk+"|denom", 100)
 			records = append(records, map[string]any{
 				"id": disk,

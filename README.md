@@ -49,7 +49,8 @@ isn't one vendor.
 | Gap when running vendor-native tools per platform | What Plumb does instead |
 |---|---|
 | **A different dashboard per vendor** — Pure's Grafana boards look nothing like NetApp's, and neither shares layout, terminology, or severity language with the other | **One interface, one layout, per-vendor terminology** — a NetApp array shows "Aggregate Disk Busy" and "SnapMirror Lag"; a Pure array shows its own vendor-accurate labels; both render in the identical Front-End/Back-End split, so the *investigation pattern* is identical even when the *metric names* aren't |
-| **No cross-vendor bottleneck logic** — a wall of panels doesn't tell you *where* a problem originates, per vendor or across vendors | **A correlation finding, built once, applied to every vendor** — "front-end degraded, back-end clean" fires the same way whether the back-end evidence is Pure's capacity/replication signals or NetApp's direct controller-busy% (see [Metrics Reference §8](docs/METRICS-REFERENCE.md#8-what-each-vendor-cannot-tell-you) for exactly how that confidence differs by vendor) |
+| **No cross-vendor bottleneck logic** — a wall of panels doesn't tell you *where* a problem originates, per vendor or across vendors | **Two correlation findings, built once, applied to every vendor** — "front-end degraded, back-end clean" fires the same way whether the back-end evidence is Pure's capacity/replication signals or NetApp's direct controller-busy% (see [Metrics Reference §8](docs/METRICS-REFERENCE.md#8-what-each-vendor-cannot-tell-you) for exactly how that confidence differs by vendor); a second distinguishes replication lag caused by local write-path contention from lag caused by the link or target itself |
+| **A fleet-wide average can hide a single bad node/disk** — two nodes at 95%/5% average to a comfortable 50%, under any reasonable watch threshold | **Per-node/per-disk breakdowns that actually generate findings** — ONTAP's node CPU and disk busy (and every StorageGRID per-node metric) get a worst-first breakdown, and a node genuinely worse than its own fleet-wide average produces its own finding and webhook, not just a chart nobody happens to open |
 | **Grafana retains what its backing TSDB is configured to retain** — often days to weeks in a default setup | **Unlimited retention by default** — VictoriaMetrics configured for 100-year retention out of the box; Prometheus itself is just a 2-day buffer in front of it |
 | **No reporting layer** — Grafana renders a dashboard, it doesn't write you an analysis | **Two report types plus CSV export**, computed on demand from stored history, with a written (not LLM-generated — deterministic, reproducible) analysis per metric — see [Reports & Data Export](#7-reports--data-export) |
 | **Nothing tells you if your dashboard's underlying components are outdated** | **Check-and-notify version checking** — looks up newer Prometheus/VictoriaMetrics releases once a day, shows what it finds, never auto-installs anything |
@@ -95,6 +96,13 @@ breakdown):
 - **Suggested thresholds**, computed per array from its own observed
   P90/P99 history — every vendor threshold file says to tune to your own
   baseline; this computes what that baseline actually is
+- **Capacity time-to-threshold projections** in reports — a climbing
+  capacity metric gets "at this rate, critical in roughly N weeks," not just
+  "trended up 18%"
+- **Flapping vs. sustained detection** — a metric that crossed a threshold
+  and recovered five separate times reads differently from one that stayed
+  over it continuously, even when the two look identical by percentage of
+  time spent elevated
 - **CSV export** of raw time series for anything a report's summary doesn't
   cover
 - **Check-and-notify updates** for the bundled components, with zero

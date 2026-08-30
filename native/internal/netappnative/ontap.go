@@ -17,8 +17,8 @@ import (
 
 // ONTAPCollector polls a cluster's REST API directly (basic auth, the same
 // auth_style and account Harvest's own setup docs call for) and re-exposes
-// all seven metrics config/thresholds/netapp_ontap.yml expects, under the
-// exact same names Harvest used to produce:
+// every metric config/thresholds/netapp_ontap.yml expects, under the exact
+// same names Harvest used to produce:
 //
 //   - volume_avg_latency  — GET /api/cluster/metrics, latency.total (µs→ms).
 //     Cluster-wide rather than per-volume: avoids an N+1 fetch across every
@@ -29,14 +29,20 @@ import (
 //     division (raw/base*100) is confirmed wrong (their KB article
 //     CONTAP-377586, corroborated by Checkmk's fix in werk #17623): the
 //     correct math is a ratio of deltas between two samples, so this keeps
-//     the previous poll's raw/base per array and computes
-//     delta(raw)/delta(base)*100 — the first poll for any array has
-//     nothing to diff against yet and is skipped, not guessed.
+//     the previous poll's raw/base per array (and per node — see
+//     collectNodeCPU's own comment on why the cluster-wide average alone
+//     has a real blind spot) and computes delta(raw)/delta(base)*100 — the
+//     first poll for any array has nothing to diff against yet and is
+//     skipped, not guessed.
 //   - aggr_space_used_percent — GET /api/storage/aggregates,
 //     space.block_storage.{used,size} summed across aggregates. Plain
 //     arithmetic on a capacity field, not a performance counter.
 //   - snapmirror_lag_time — GET /api/snapmirror/relationships, lag_time
 //     (ISO-8601 duration, e.g. "PT8H35M42S"), max across relationships.
+//   - snapmirror_bandwidth_bytes — GET api/private/cli/snapmirror,
+//     total_transfer_bytes. See collectSnapMirrorBandwidth's own comment:
+//     this is the one metric in this file sourced from an unsupported CLI
+//     passthrough rather than a documented REST resource.
 //   - nic_rx_crc_errors   — GET /api/network/ethernet/ports, statistics.
 //     device.{receive_raw,transmit_raw}.errors. This is confirmed real and
 //     live (unlike Harvest's own source, which reads CRC-specific counters
@@ -50,9 +56,10 @@ import (
 //     the standard Prometheus idiom for counters.
 //   - aggr_disk_busy, nic_util_percent — see ontap_countertables.go. Both
 //     need ONTAP's raw performance counter-tables API (a different
-//     endpoint family from the six metrics above), whose bulk-fetch query
+//     endpoint family from the metrics above), whose bulk-fetch query
 //     syntax is copied directly from Harvest's own production Go source
-//     rather than guessed.
+//     rather than guessed. aggr_disk_busy also gets a per-disk breakdown
+//     for the same reason node_cpu_busy gets a per-node one.
 type ONTAPCollector struct {
 	mu       sync.Mutex
 	cpuState map[string]cpuSample
@@ -120,6 +127,7 @@ func (c *ONTAPCollector) WriteMetrics(w io.Writer, arr config.Array) error {
 	c.collectNodeCPU(pw, client, arr)
 	c.collectAggregateCapacity(pw, client, arr)
 	c.collectSnapMirrorLag(pw, client, arr)
+	c.collectSnapMirrorBandwidth(pw, client, arr)
 	c.collectNICErrors(pw, client, arr)
 	c.collectAggrDiskBusy(pw, client, arr)
 	c.collectNICUtilization(pw, client, arr)
@@ -181,6 +189,7 @@ func (c *ONTAPCollector) collectClusterLatency(pw *promWriter, client *http.Clie
 
 type nodesResp struct {
 	Records []struct {
+		Name       string `json:"name"`
 		Statistics struct {
 			ProcessorUtilizationRaw  float64 `json:"processor_utilization_raw"`
 			ProcessorUtilizationBase float64 `json:"processor_utilization_base"`
@@ -188,8 +197,19 @@ type nodesResp struct {
 	} `json:"records"`
 }
 
+// collectNodeCPU emits both the cluster-wide average (unchanged — every
+// existing threshold/panel/report keys on this exact metric name) and a
+// per-node breakdown. The average alone has a real blind spot: two nodes
+// at 95%/5% busy average to ~50%, comfortably under the 70% watch line,
+// silently hiding a genuine single-node hot spot — exactly the finding
+// this metric's own investigate text already asks the reader to check for
+// ("both nodes elevated, or only one?") but the pre-aggregated number
+// can't answer. `name` is a standard REST resource field on every ONTAP
+// version this targets, unlike the counter-tables properties used
+// elsewhere in this file, which is why this one didn't need the same
+// verification caveat.
 func (c *ONTAPCollector) collectNodeCPU(pw *promWriter, client *http.Client, arr config.Array) {
-	body, err := c.get(client, arr, "/api/cluster/nodes?fields=statistics.processor_utilization_raw,statistics.processor_utilization_base")
+	body, err := c.get(client, arr, "/api/cluster/nodes?fields=name,statistics.processor_utilization_raw,statistics.processor_utilization_base")
 	if err != nil {
 		pw.note("node_cpu_busy", "node_cpu_busy unavailable for %s: %v", arr.ID, err)
 		return
@@ -199,25 +219,54 @@ func (c *ONTAPCollector) collectNodeCPU(pw *promWriter, client *http.Client, arr
 		pw.note("node_cpu_busy", "node_cpu_busy unavailable for %s: no records in /api/cluster/nodes response", arr.ID)
 		return
 	}
+
+	now := time.Now()
+	c.mu.Lock()
 	var sumRaw, sumBase float64
-	for _, n := range r.Records {
+	var perNodePct []struct {
+		name string
+		pct  float64
+	}
+	allWarm := true
+	for i, n := range r.Records {
 		sumRaw += n.Statistics.ProcessorUtilizationRaw
 		sumBase += n.Statistics.ProcessorUtilizationBase
-	}
 
-	c.mu.Lock()
-	prev, had := c.cpuState[arr.ID]
-	c.cpuState[arr.ID] = cpuSample{raw: sumRaw, base: sumBase, at: time.Now()}
+		nodeName := n.Name
+		if nodeName == "" {
+			nodeName = fmt.Sprintf("node-%d", i)
+		}
+		key := arr.ID + "|" + nodeName
+		prevNode, hadNode := c.cpuState[key]
+		c.cpuState[key] = cpuSample{raw: n.Statistics.ProcessorUtilizationRaw, base: n.Statistics.ProcessorUtilizationBase, at: now}
+		if !hadNode || n.Statistics.ProcessorUtilizationBase <= prevNode.base {
+			allWarm = false
+			continue
+		}
+		nodePct := (n.Statistics.ProcessorUtilizationRaw - prevNode.raw) / (n.Statistics.ProcessorUtilizationBase - prevNode.base) * 100
+		perNodePct = append(perNodePct, struct {
+			name string
+			pct  float64
+		}{nodeName, nodePct})
+	}
+	prevTotal, hadTotal := c.cpuState[arr.ID]
+	c.cpuState[arr.ID] = cpuSample{raw: sumRaw, base: sumBase, at: now}
 	c.mu.Unlock()
 
-	if !had || sumBase <= prev.base {
+	if !hadTotal || sumBase <= prevTotal.base {
 		// First poll for this array (or a counter reset, e.g. a node reboot) —
 		// nothing valid to diff against yet. Correct next poll, not a guess now.
 		pw.note("node_cpu_busy", "node_cpu_busy warming up for %s (needs a second sample to compute a rate)", arr.ID)
 		return
 	}
-	pct := (sumRaw - prev.raw) / (sumBase - prev.base) * 100
+	pct := (sumRaw - prevTotal.raw) / (sumBase - prevTotal.base) * 100
 	pw.gauge("node_cpu_busy", "Cluster-wide average CPU busy percent", arr.ID, pct)
+
+	if allWarm {
+		for _, np := range perNodePct {
+			pw.gaugeNode("node_cpu_busy_by_node", "CPU busy percent by node", arr.ID, np.name, np.pct)
+		}
+	}
 }
 
 type aggregatesResp struct {
@@ -309,6 +358,54 @@ func (c *ONTAPCollector) collectSnapMirrorLag(pw *promWriter, client *http.Clien
 		}
 	}
 	pw.gauge("snapmirror_lag_time", "Maximum SnapMirror lag across relationships, seconds", arr.ID, maxLag)
+}
+
+// snapmirrorPrivateResp is api/private/cli/snapmirror's shape — an
+// unsupported CLI passthrough, not a documented REST resource (see
+// collectSnapMirrorBandwidth's own comment for why this is the only path
+// to a bandwidth figure at all).
+type snapmirrorPrivateResp struct {
+	Records []struct {
+		RelationshipID     string  `json:"relationship_id"`
+		TotalTransferBytes float64 `json:"total_transfer_bytes"`
+	} `json:"records"`
+}
+
+// collectSnapMirrorBandwidth is best-effort in a stronger sense than every
+// other collector in this file: api/private/cli/* is NetApp's own
+// CLI-passthrough mechanism, explicitly unsupported and undocumented as a
+// REST resource — confirmed by NetApp Harvest's own SnapMirror config
+// (conf/rest/9.12.0/snapmirror.yaml), whose comment states plainly that
+// the fields this needs ("total_transfer_bytes") only exist via this
+// private endpoint, not the public api/snapmirror/relationships resource
+// collectSnapMirrorLag above uses. If this endpoint changes shape or
+// disappears in a future ONTAP release, this metric alone degrades to
+// "unavailable" — replication_lag and everything else in this file is
+// completely unaffected, the same isolation principle already applied to
+// StorageGRID's private-metric-sourced GET/PUT panels.
+func (c *ONTAPCollector) collectSnapMirrorBandwidth(pw *promWriter, client *http.Client, arr config.Array) {
+	body, err := c.get(client, arr, "/api/private/cli/snapmirror?fields=total_transfer_bytes")
+	if err != nil {
+		pw.note("snapmirror_bandwidth_bytes", "snapmirror_bandwidth_bytes unavailable for %s: %v (api/private/cli is an unsupported CLI passthrough and may not exist on every ONTAP version/permission level)", arr.ID, err)
+		return
+	}
+	var r snapmirrorPrivateResp
+	if err := json.Unmarshal(body, &r); err != nil {
+		pw.note("snapmirror_bandwidth_bytes", "snapmirror_bandwidth_bytes unavailable for %s: could not parse api/private/cli/snapmirror response", arr.ID)
+		return
+	}
+	if len(r.Records) == 0 {
+		pw.gauge("snapmirror_bandwidth_bytes", "Cumulative SnapMirror transfer bytes, summed across relationships", arr.ID, 0)
+		return
+	}
+	var total float64
+	for _, rel := range r.Records {
+		total += rel.TotalTransferBytes
+	}
+	// Raw cumulative total, not a rate — config/thresholds/netapp_ontap.yml's
+	// snapmirror_bandwidth query wraps this in rate(...), the standard
+	// Prometheus idiom for a counter (same pattern as nic_rx_crc_errors).
+	pw.counter("snapmirror_bandwidth_bytes", "Cumulative SnapMirror transfer bytes, summed across relationships", arr.ID, total)
 }
 
 type ethernetPortsResp struct {

@@ -190,7 +190,7 @@ function nodeBreakdownHtml(p) {
   if (!p.nodes || !p.nodes.length) return "";
   const digits = p.unit === "%" || p.unit.includes("errors") || p.unit.includes("per port") ? 0 : 2;
   return `<div class="panel-nodes">
-    <div class="panel-nodes-label">By node</div>
+    <div class="panel-nodes-label">Breakdown</div>
     ${p.nodes
       .map(
         (n) => `<div class="panel-node-row">

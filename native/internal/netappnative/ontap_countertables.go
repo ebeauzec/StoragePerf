@@ -174,6 +174,12 @@ func (c *ONTAPCollector) collectAggrDiskBusy(pw *promWriter, client *http.Client
 	defer c.mu.Unlock()
 	var pctSum float64
 	var pctCount int
+	// Per-disk breakdown alongside the fleet average below — the average
+	// alone hides exactly the case its own investigate text calls out (a
+	// single degraded/rebuilding disk), the same masking problem as
+	// node_cpu_busy above. Capped to the worst 10 in the thresholds query
+	// (topk), not here, since a real cluster can have hundreds of disks and
+	// the breakdown UI has no pagination of its own.
 	for _, row := range rows {
 		busy, ok1 := row.counterValue(counterName)
 		denomVal, ok2 := 1.0, true
@@ -195,6 +201,7 @@ func (c *ONTAPCollector) collectAggrDiskBusy(pw *promWriter, client *http.Client
 		}
 		pctSum += pct
 		pctCount++
+		pw.gaugeNode("aggr_disk_busy_by_node", "Disk busy percent by disk", arr.ID, row.ID, pct)
 	}
 	if pctCount == 0 {
 		pw.note("aggr_disk_busy", "aggr_disk_busy warming up for %s (needs a second sample to compute a rate)", arr.ID)

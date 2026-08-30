@@ -134,6 +134,26 @@ var Fleet = []Array{
 			"ilm_backlog": "critical",
 		},
 	},
+
+	// 4. Replication lag with a clean capacity signal — demonstrates the
+	// rules engine's second cross-panel correlation finding (the one
+	// beyond front-end/back-end): host_latency critical (which, via
+	// pure.go's shared metricID design, cascades to host_latency_write
+	// too) and replication_lag critical, while pool_saturation stays
+	// healthy. That combination should read as local write-path
+	// contention — something competing for the write path, not the
+	// replication link or a capacity-driven side effect — since capacity
+	// is explicitly ruled out here, unlike mock-fa-capacity-01 above where
+	// it's the actual cause.
+	{
+		ID: "mock-fa-writecontention-01", Name: "fa-writecontention-01", Model: "FA-X70R3", Vendor: config.VendorPureFlashArray,
+		Profile: "healthy",
+		Overrides: map[string]string{
+			"host_latency":    "critical",
+			"replication_lag": "critical",
+			"pool_saturation": "healthy",
+		},
+	},
 }
 
 func (a Array) AsConfigArray() config.Array {

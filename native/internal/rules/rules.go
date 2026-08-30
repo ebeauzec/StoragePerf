@@ -25,6 +25,23 @@ const (
 	Unknown  Severity = "unknown"
 )
 
+// severityRank orders severities worst-first for comparison — used to tell
+// whether a node/disk's own severity is actually worse than what its
+// panel's own fleet-wide aggregate already shows (see the node-level
+// finding block in BuildFindings).
+func severityRank(s Severity) int {
+	switch s {
+	case Critical:
+		return 3
+	case Watch:
+		return 2
+	case Good:
+		return 1
+	default:
+		return 0
+	}
+}
+
 func Classify(value float64, ok bool, watch, critical float64) Severity {
 	if !ok {
 		return Unknown
@@ -204,6 +221,14 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 	var severities []Severity
 	for _, p := range panels {
 		severities = append(severities, p.Severity)
+		// A node/disk worse than its own panel's fleet-wide average must
+		// still count toward overall Health — otherwise the exact masking
+		// problem this breakdown exists to fix would just move up one
+		// level: the panel shows the hot node, but the array-wide badge
+		// still reads "good".
+		for _, n := range p.Nodes {
+			severities = append(severities, n.Severity)
+		}
 		if p.Value == nil || (p.Severity != Watch && p.Severity != Critical) {
 			continue
 		}
@@ -227,6 +252,49 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 			Investigate: m.Investigate,
 			Remediate:   m.Remediate,
 		})
+	}
+
+	// Node/disk-level findings: a metric with a NodeBreakdownQuery can have
+	// one node genuinely at watch/critical while the fleet-wide average
+	// (the loop above) reads good — the average masks it, same as the
+	// masking problem node_cpu_busy/aggr_disk_busy had before they got
+	// this breakdown. Without this block, that hot node would show up in
+	// the panel's own breakdown chart but never as an actual finding —
+	// meaning it also wouldn't reach the findings history or a webhook
+	// (internal/api/monitor.go builds both from panel-level severity).
+	// Generic across every vendor's NodeBreakdownQuery metrics, not just
+	// ONTAP's — StorageGRID's existing per-node metrics get the same
+	// protection for free.
+	for _, p := range panels {
+		if len(p.Nodes) == 0 {
+			continue
+		}
+		m, ok := metricByID[p.ID]
+		if !ok {
+			continue
+		}
+		for _, n := range p.Nodes {
+			if severityRank(n.Severity) <= severityRank(p.Severity) {
+				continue // the fleet-wide number already reflects this node, or worse
+			}
+			tmpl, exists := m.Finding[string(n.Severity)]
+			if !exists {
+				continue
+			}
+			threshold := m.SeverityWatch
+			if n.Severity == Critical {
+				threshold = m.SeverityCritical
+			}
+			findings = append(findings, Finding{
+				Severity: n.Severity, Tag: m.Category, Title: fmt.Sprintf("%s — %s", m.Label, n.Node),
+				Body: fmt.Sprintf("The fleet-wide average for this metric reads %s, but %s is masking that: %s",
+					strings.ToLower(string(p.Severity)), n.Node, formatTemplate(tmpl, n.Value, threshold)),
+				Ref:         fmt.Sprintf("%s · %s · %s", arrayID, m.ID, n.Node),
+				MetricID:    m.ID + "/" + n.Node,
+				Investigate: m.Investigate,
+				Remediate:   m.Remediate,
+			})
+		}
 	}
 
 	// Cross-panel correlation: front-end degraded while every back-end
@@ -274,6 +342,74 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 		}}, findings...)
 	}
 
+	// Second cross-panel correlation: replication lag alone can't say
+	// whether the cause is local (write path contending for the same
+	// resources as replication) or remote (the link or target). Every
+	// per-metric finding's own investigate text already tells the reader
+	// to go check this manually; this derives the answer automatically
+	// from panels already evaluated, the same way the front-end/back-end
+	// correlation above does. Deliberately looks at a small fixed set of
+	// metric IDs (present on Pure and ONTAP, absent on StorageGRID, which
+	// has no replication concept) rather than a category, since "lag" and
+	// "write latency" aren't categories the way front-end/back-end are.
+	panelByID := make(map[string]Panel, len(panels))
+	for _, p := range panels {
+		panelByID[p.ID] = p
+	}
+	firstBad := func(ids ...string) (Panel, bool) {
+		for _, id := range ids {
+			if p, ok := panelByID[id]; ok && (p.Severity == Watch || p.Severity == Critical) {
+				return p, true
+			}
+		}
+		return Panel{}, false
+	}
+	firstPresent := func(ids ...string) (Panel, bool) {
+		for _, id := range ids {
+			if p, ok := panelByID[id]; ok {
+				return p, true
+			}
+		}
+		return Panel{}, false
+	}
+	if lag, ok := firstBad("replication_lag", "snapmirror_lag"); ok {
+		writeLatency, haveWrite := firstPresent("host_latency_write", "volume_avg_latency_write")
+		capacity, haveCapacity := firstPresent("pool_saturation", "aggr_capacity", "storage_capacity")
+		switch {
+		case haveWrite && (writeLatency.Severity == Watch || writeLatency.Severity == Critical) && (!haveCapacity || capacity.Severity == Good):
+			findings = append([]Finding{{
+				Severity: lag.Severity, Tag: "fleet",
+				Title: "Replication lag looks like local write-path contention, not the link",
+				Body:  fmt.Sprintf("%s is elevated at the same time as %s, while capacity is within range. That combination points at something competing for the same local write path — background space reclamation, dedup/compression scans, or a genuine write burst — rather than the replication link or target.", lag.Label, writeLatency.Label),
+				Ref:   fmt.Sprintf("%s · derived from %s + %s", arrayID, lag.ID, writeLatency.ID),
+				Investigate: []string{
+					"Review recent snapshot schedules, dedup/compression scans, or other background jobs that share the write path with replication.",
+					"Check the source volume's write change rate for a genuine burst coinciding with the lag increase.",
+					"Confirm this is broad (most volumes affected) rather than isolated to whatever's being replicated, which would point elsewhere.",
+				},
+				Remediate: []string{
+					"Reschedule the competing background job to a lower-impact window rather than tuning replication directly.",
+					"If a genuine write burst, this may resolve on its own once it passes — confirm lag recovers afterward.",
+				},
+			}}, findings...)
+		case haveWrite && writeLatency.Severity == Good:
+			findings = append([]Finding{{
+				Severity: lag.Severity, Tag: "fleet",
+				Title: "Replication lag with clean local write latency points at the link or target",
+				Body:  fmt.Sprintf("%s is elevated while %s is within range — the local write path isn't the bottleneck, which points at the replication link itself or the destination system.", lag.Label, writeLatency.Label),
+				Ref:   fmt.Sprintf("%s · derived from %s + %s", arrayID, lag.ID, writeLatency.ID),
+				Investigate: []string{
+					"Check the replication network path's throughput and utilization between source and destination for the same window.",
+					"Confirm the destination system's own health and capacity — a slow or full target causes lag on every incoming relationship regardless of source load.",
+				},
+				Remediate: []string{
+					"Engage the network team if the link itself is saturated.",
+					"If the destination is the bottleneck, address its performance/capacity directly — treat it as its own system in this dashboard.",
+				},
+			}}, findings...)
+		}
+	}
+
 	health := Good
 	for _, s := range severities {
 		if s == Critical {
@@ -291,15 +427,32 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 // Stats summarizes one metric's series over a report period — the basis
 // for the "comprehensive analysis at every level" report requirement.
 type Stats struct {
-	MetricID         string
-	Label            string
-	Unit             string
-	Category         string
-	Min, Avg, Max    float64
-	P90, P95, P99    float64
-	WatchPct         float64 // fraction of samples at/above watch
-	CriticalPct      float64
-	TrendPct         float64 // % change, first quarter avg -> last quarter avg
+	MetricID      string
+	Label         string
+	Unit          string
+	Category      string
+	Min, Avg, Max float64
+	P90, P95, P99 float64
+	WatchPct      float64 // fraction of samples at/above watch
+	CriticalPct   float64
+	// Episodes counts distinct excursions at/above watch during the period
+	// (a rising-edge crossing of the watch line, not a running tally of
+	// samples) — the same WatchPct/CriticalPct reads identically whether a
+	// metric spent 10% of the period in one sustained stretch or scattered
+	// across ten short spikes, and those are different problems: one
+	// steady condition vs. something recurring (a scheduled job, an
+	// intermittent link fault) worth finding the trigger for.
+	Episodes int
+	TrendPct float64 // % change, first quarter avg -> last quarter avg
+	// LastQuarterAvg and TrendSpanSeconds are the raw inputs behind TrendPct
+	// (last quarter's average value, and the real elapsed time between the
+	// first and last quarter's midpoints) — kept separately so a caller can
+	// project an absolute rate (value/day), not just a relative percentage,
+	// for metrics where "days until threshold" is meaningful (see
+	// report.capacityProjection).
+	FirstQuarterAvg  float64
+	LastQuarterAvg   float64
+	TrendSpanSeconds float64
 	ThresholdLabel   string
 	SeverityWatch    float64
 	SeverityCritical float64
@@ -343,6 +496,15 @@ func Summarize(m config.MetricDef, pts []vm.Point) Stats {
 	s.WatchPct = 100 * float64(watchCount) / float64(len(pts))
 	s.CriticalPct = 100 * float64(critCount) / float64(len(pts))
 
+	wasBad := false
+	for _, p := range pts {
+		isBad := p.Value >= m.SeverityWatch
+		if isBad && !wasBad {
+			s.Episodes++
+		}
+		wasBad = isBad
+	}
+
 	sorted := append([]float64(nil), values...)
 	sort.Float64s(sorted)
 	s.P90 = Percentile(sorted, 0.90)
@@ -360,9 +522,14 @@ func Summarize(m config.MetricDef, pts []vm.Point) Stats {
 		}
 		firstAvg := firstSum / float64(quarter)
 		lastAvg := lastSum / float64(quarter)
+		s.FirstQuarterAvg = firstAvg
+		s.LastQuarterAvg = lastAvg
 		if firstAvg != 0 {
 			s.TrendPct = 100 * (lastAvg - firstAvg) / firstAvg
 		}
+		firstMid := pts[quarter/2].Time
+		lastMid := pts[len(pts)-quarter+quarter/2].Time
+		s.TrendSpanSeconds = lastMid - firstMid
 	}
 	return s
 }

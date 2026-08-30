@@ -161,7 +161,16 @@ metrics:
     # is NetApp's own trigger to review and relocate workloads. 85% critical
     # is a reasonable buffer above that documented line, not itself an
     # officially published number.
+    #
+    # This is a CLUSTER-WIDE AVERAGE across every node — real and correct,
+    # but it has a genuine blind spot: two nodes at 95%/5% average to ~50%,
+    # comfortably under 70%, silently hiding a real single-node hot spot.
+    # node_breakdown_query answers exactly the question this metric's own
+    # investigate text already asks ("both nodes elevated, or only one?")
+    # using each node's own delta(raw)/delta(base) — see
+    # internal/netappnative/ontap.go's collectNodeCPU.
     query: 'avg(node_cpu_busy{array="{array}"})'
+    node_breakdown_query: 'node_cpu_busy_by_node{array="{array}"}'
     comparison: gt
     severity_watch: 70
     severity_critical: 85
@@ -188,7 +197,14 @@ metrics:
     # stating the number). These values are modeled by analogy to the
     # documented CPU guidance, not independently confirmed for disks —
     # still a reasonable engineering default, just a real gap.
+    #
+    # Same masking risk as node_cpu_busy: this is a fleet-wide average
+    # across every disk, which can hide one degraded/rebuilding disk behind
+    # dozens of healthy ones. node_breakdown_query surfaces the worst 10
+    # disks by ID (topk, not every disk — a real cluster can have hundreds
+    # and the breakdown UI has no pagination of its own).
     query: 'avg(aggr_disk_busy{array="{array}"})'
+    node_breakdown_query: 'topk(10, aggr_disk_busy_by_node{array="{array}"})'
     comparison: gt
     severity_watch: 70
     severity_critical: 85
@@ -225,6 +241,34 @@ metrics:
       - "Increase replication network bandwidth or schedule heavy write workloads outside the replication window."
       - "Address destination cluster performance directly if it's the limiting factor."
       - "Review SnapMirror policy/schedule — more frequent, smaller transfers may keep lag lower than large infrequent ones."
+
+  - id: snapmirror_bandwidth
+    category: backend
+    label: "SnapMirror Bandwidth"
+    unit: "MB/s"
+    # total_transfer_bytes is real, but NetApp Harvest's own SnapMirror
+    # config (conf/rest/9.12.0/snapmirror.yaml) sources it from
+    # api/private/cli/snapmirror — an unsupported CLI-passthrough endpoint,
+    # not the documented api/snapmirror/relationships REST resource
+    # snapmirror_lag above uses. NetApp can change or remove api/private/cli/*
+    # without notice; treat this one specifically as lower-confidence than
+    # the rest of this file. If it's unavailable on your cluster (older
+    # ONTAP, restricted RBAC role), this panel degrades to "unavailable" —
+    # snapmirror_lag and everything else here is unaffected.
+    query: 'rate(snapmirror_bandwidth_bytes{array="{array}"}[5m]) / 1000000'
+    comparison: gt
+    severity_watch: 500
+    severity_critical: 1000
+    threshold_label: "illustrative only — set from your own baseline (sourced from an unsupported private API — see comment)"
+    finding:
+      watch: "SnapMirror transfer rate is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your cluster's own observed normal range."
+      critical: "SnapMirror transfer rate is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your cluster's own observed normal range."
+    investigate:
+      - "Correlate against snapmirror_lag above — bandwidth pegged near the link's known capacity while lag climbs points at the link, not the cluster."
+      - "First confirm whether this is actually unusual relative to this cluster's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "If this panel shows unavailable, api/private/cli/snapmirror may not exist on this ONTAP version or the configured account's permission level — snapmirror_lag is unaffected."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/netapp_ontap.yml with a value derived from this cluster's own observed normal range, or from the replication link's actual provisioned capacity."
 
   - id: aggr_capacity
     category: backend
