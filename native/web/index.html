@@ -128,7 +128,7 @@
       <div class="section-note">A background check every 5 minutes posts a webhook when a metric newly crosses watch/critical, or recovers</div>
     </div>
     <div class="config-card retention-card">
-      <div class="toggle-row" style="padding:0 0 14px;">
+      <div class="toggle-row nested">
         <div class="toggle-row-text">
           <div class="toggle-title">Enable webhook notifications</div>
           <div class="toggle-desc">A plain HTTP POST with a JSON body (including a "text" field Slack's incoming-webhook integration renders directly) — works with Slack, Microsoft Teams, PagerDuty (via its Events API v2 proxy), or any automation tool that accepts a webhook.</div>
@@ -140,7 +140,7 @@
       </div>
       <div class="retention-row">
         <div class="toggle-row-text"><div class="toggle-title">Webhook URL</div></div>
-        <input id="notify-webhook-url" placeholder="https://hooks.slack.com/services/..." style="flex:1; min-width:280px;">
+        <input id="notify-webhook-url" class="retention-input" placeholder="https://hooks.slack.com/services/...">
       </div>
       <div class="retention-row">
         <div class="toggle-row-text"><div class="toggle-title">Minimum severity to notify on</div></div>
@@ -161,7 +161,7 @@
       <div class="section-note">Automatically generates and archives a fleet report on a schedule — browse past ones below</div>
     </div>
     <div class="config-card retention-card">
-      <div class="toggle-row" style="padding:0 0 14px;">
+      <div class="toggle-row nested">
         <div class="toggle-row-text">
           <div class="toggle-title">Enable scheduled reports</div>
           <div class="toggle-desc">Saved to data/reports/ (last 60 kept). If notifications are also enabled above, a summary is posted to your webhook each time one is generated.</div>

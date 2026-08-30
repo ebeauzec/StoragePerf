@@ -213,6 +213,18 @@ a{color:inherit;}
 }
 .retention-select:focus{outline:1px solid var(--accent-fe-dim);}
 #retention-status:not(:empty){margin-top:10px;}
+.retention-input{
+  background:var(--surface-raised); border:1px solid var(--border); color:var(--text);
+  border-radius:6px; padding:8px 10px; font-size:12.5px; font-family:"IBM Plex Mono"; flex:1; min-width:0;
+}
+.retention-input::placeholder{color:var(--text-dim);}
+.retention-input:focus{outline:1px solid var(--accent-fe-dim);}
+/* A toggle-row nested inside a .config-card (Notifications, Scheduled
+   Reports) sits on the card's own background — its default standalone
+   look (own background/border/radius, used by "Show mock data") would
+   draw a box inside a box, so this swaps that for a plain separator
+   matching .retention-stat's own bottom-border treatment. */
+.toggle-row.nested{background:transparent; border:none; border-radius:0; padding:0 0 14px; margin-bottom:14px; border-bottom:1px solid var(--border-soft);}
 
 .toggle-row{
   display:flex; align-items:center; justify-content:space-between; gap:16px;
