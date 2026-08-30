@@ -91,9 +91,11 @@ var Fleet = []Array{
 		ID: "mock-ontap-cluster-03", Name: "ontap-cluster-03", Model: "AFF A400", Vendor: config.VendorNetAppONTAP,
 		Profile: "healthy",
 		Overrides: map[string]string{
-			"node_cpu_busy":      "critical",
-			"aggr_disk_busy":     "critical",
-			"volume_avg_latency": "watch",
+			"node_cpu_busy":            "critical",
+			"aggr_disk_busy":           "critical",
+			"volume_avg_latency":       "watch",
+			"volume_avg_latency_read":  "watch",
+			"volume_avg_latency_write": "watch",
 		},
 	},
 

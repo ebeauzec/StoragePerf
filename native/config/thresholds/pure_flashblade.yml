@@ -90,10 +90,14 @@ metrics:
     category: backend
     label: "Bucket Throughput"
     unit: ops
+    # This is the SUM of bucket_throughput_read + bucket_throughput_write,
+    # so its thresholds must scale with that — reusing the same 100k/200k
+    # as the per-direction panels would flag this "critical" whenever both
+    # directions are merely at their own individually-normal levels.
     query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension=~"^(reads_per_sec|writes_per_sec)$"})'
     comparison: gt
-    severity_watch: 100000
-    severity_critical: 200000
+    severity_watch: 180000
+    severity_critical: 350000
     threshold_label: "illustrative only — set from your own baseline"
     finding:
       watch: "Aggregate bucket throughput is {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
