@@ -1,0 +1,195 @@
+package report
+
+import (
+	"fmt"
+	"io"
+
+	"github.com/go-pdf/fpdf"
+)
+
+// pdfColors mirrors styleBlock's palette closely enough to read as the same
+// report in a different format, not a second, inconsistent-looking one.
+var (
+	pdfInk      = [3]int{22, 27, 34}
+	pdfMuted    = [3]int{91, 100, 114}
+	pdfGood     = [3]int{26, 143, 76}
+	pdfWatch    = [3]int{169, 102, 10}
+	pdfCritical = [3]int{193, 38, 61}
+	pdfLine     = [3]int{226, 229, 234}
+)
+
+func pdfSeverityColor(sev string) [3]int {
+	switch sev {
+	case "critical":
+		return pdfCritical
+	case "watch":
+		return pdfWatch
+	default:
+		return pdfGood
+	}
+}
+
+func newReportPDF(title, meta string) *fpdf.Fpdf {
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetMargins(18, 18, 18)
+	pdf.SetAutoPageBreak(true, 18)
+	pdf.AddPage()
+	pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+	pdf.SetFont("Helvetica", "B", 18)
+	pdf.CellFormat(0, 9, title, "", 1, "L", false, 0, "")
+	pdf.SetFont("Helvetica", "", 9.5)
+	pdf.SetTextColor(pdfMuted[0], pdfMuted[1], pdfMuted[2])
+	pdf.MultiCell(0, 5, meta, "", "L", false)
+	pdf.Ln(2)
+	pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+	return pdf
+}
+
+func pdfSectionHeading(pdf *fpdf.Fpdf, text string) {
+	pdf.Ln(3)
+	pdf.SetFont("Helvetica", "B", 11.5)
+	pdf.SetTextColor(pdfMuted[0], pdfMuted[1], pdfMuted[2])
+	pdf.CellFormat(0, 7, text, "B", 1, "L", false, 0, "")
+	pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+	pdf.Ln(2)
+}
+
+func pdfNoteBox(pdf *fpdf.Fpdf, label, body string, color [3]int) {
+	pdf.SetFont("Helvetica", "B", 9.5)
+	pdf.SetTextColor(color[0], color[1], color[2])
+	pdf.CellFormat(0, 5.5, label, "", 1, "L", false, 0, "")
+	pdf.SetFont("Helvetica", "", 9.5)
+	pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+	pdf.MultiCell(0, 5, body, "", "L", false)
+	pdf.Ln(2)
+}
+
+func pdfMetricTable(pdf *fpdf.Fpdf, narratives []MetricNarrative) {
+	if len(narratives) == 0 {
+		pdf.SetFont("Helvetica", "I", 9.5)
+		pdf.SetTextColor(pdfMuted[0], pdfMuted[1], pdfMuted[2])
+		pdf.CellFormat(0, 6, "No metrics defined for this vendor.", "", 1, "L", false, 0, "")
+		pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+		return
+	}
+	widths := []float64{50, 22, 22, 22, 22, 20, 16}
+	headers := []string{"Metric", "Min", "Avg", "P95", "Max", "Unit", "Samples"}
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetFillColor(244, 245, 247)
+	for i, h := range headers {
+		pdf.CellFormat(widths[i], 6, h, "B", 0, "L", true, 0, "")
+	}
+	pdf.Ln(-1)
+	pdf.SetFont("Helvetica", "", 8.5)
+	for _, n := range narratives {
+		color := pdfSeverityColor(n.Severity)
+		pdf.CellFormat(widths[0], 6, n.Stats.Label, "B", 0, "L", false, 0, "")
+		pdf.CellFormat(widths[1], 6, fmt.Sprintf("%.2f", n.Stats.Min), "B", 0, "L", false, 0, "")
+		pdf.CellFormat(widths[2], 6, fmt.Sprintf("%.2f", n.Stats.Avg), "B", 0, "L", false, 0, "")
+		pdf.CellFormat(widths[3], 6, fmt.Sprintf("%.2f", n.Stats.P95), "B", 0, "L", false, 0, "")
+		pdf.SetTextColor(color[0], color[1], color[2])
+		pdf.CellFormat(widths[4], 6, fmt.Sprintf("%.2f", n.Stats.Max), "B", 0, "L", false, 0, "")
+		pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+		pdf.CellFormat(widths[5], 6, n.Stats.Unit, "B", 0, "L", false, 0, "")
+		pdf.CellFormat(widths[6], 6, fmt.Sprintf("%d", n.Stats.SampleCount), "B", 1, "L", false, 0, "")
+	}
+	pdf.Ln(2)
+	pdf.SetFont("Helvetica", "", 8.5)
+	for _, n := range narratives {
+		if n.Severity == "good" {
+			continue
+		}
+		color := pdfSeverityColor(n.Severity)
+		pdf.SetTextColor(color[0], color[1], color[2])
+		pdf.CellFormat(0, 5, fmt.Sprintf("[%s] %s", n.Severity, n.Stats.Label), "", 1, "L", false, 0, "")
+		pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+		pdf.MultiCell(0, 4.5, n.Analysis, "", "L", false)
+		pdf.Ln(1)
+	}
+}
+
+// WriteArrayReportPDF renders the same analysis as WriteArrayReport into a
+// PDF — for sharing outside a running Plumb instance (email, a ticket
+// attachment, printing) where the live HTML page isn't an option.
+func WriteArrayReportPDF(w io.Writer, rep ArrayReport) error {
+	meta := fmt.Sprintf("%s | %s\nPeriod: %s - %s UTC | Generated %s UTC",
+		rep.Array.Model, rep.Array.Vendor,
+		rep.PeriodStart.Format("2006-01-02 15:04"), rep.PeriodEnd.Format("2006-01-02 15:04"), rep.GeneratedAt.Format("2006-01-02 15:04"))
+	pdf := newReportPDF(rep.Array.Name+" - Performance Report", meta)
+
+	status := fmt.Sprintf("Overall status this period: %s", rep.Health)
+	if rep.IssueCount > 0 {
+		status += fmt.Sprintf(" - %d metric(s) crossed a threshold at least once.", rep.IssueCount)
+	} else {
+		status += " - no metric crossed its illustrative threshold."
+	}
+	pdfNoteBox(pdf, "STATUS", status, pdfSeverityColor(rep.Health))
+
+	if rep.CoverageNote != "" {
+		pdfNoteBox(pdf, "LIMITED DATA COVERAGE", rep.CoverageNote, pdfWatch)
+	}
+
+	pdfSectionHeading(pdf, "Front-End - SAN & Host Path")
+	pdfMetricTable(pdf, rep.Frontend)
+
+	pdfSectionHeading(pdf, "Back-End - Array Internal")
+	pdfMetricTable(pdf, rep.Backend)
+
+	pdf.Ln(4)
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetTextColor(pdfMuted[0], pdfMuted[1], pdfMuted[2])
+	pdf.MultiCell(0, 4, "Generated by Plumb from locally stored VictoriaMetrics history. Thresholds are illustrative defaults, not vendor-published SLAs.", "", "L", false)
+
+	return pdf.Output(w)
+}
+
+// WriteFleetReportPDF is WriteFleetReport's PDF equivalent.
+func WriteFleetReportPDF(w io.Writer, rep FleetReport) error {
+	meta := fmt.Sprintf("%d systems | Period: %s - %s UTC | Generated %s UTC",
+		len(rep.Arrays), rep.PeriodStart.Format("2006-01-02 15:04"), rep.PeriodEnd.Format("2006-01-02 15:04"), rep.GeneratedAt.Format("2006-01-02 15:04"))
+	pdf := newReportPDF("Fleet Performance Report", meta)
+
+	pdf.SetFont("Helvetica", "", 9.5)
+	pdf.MultiCell(0, 5, rep.Narrative, "", "L", false)
+	pdf.Ln(3)
+
+	pdfSectionHeading(pdf, "Systems, worst first")
+	widths := []float64{40, 30, 30, 24, 30, 20}
+	headers := []string{"System", "Vendor", "Model", "Status", "Trend", "Issues"}
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetFillColor(244, 245, 247)
+	for i, h := range headers {
+		pdf.CellFormat(widths[i], 6, h, "B", 0, "L", true, 0, "")
+	}
+	pdf.Ln(-1)
+	pdf.SetFont("Helvetica", "", 8.5)
+	for _, a := range rep.Arrays {
+		color := pdfSeverityColor(a.Health)
+		pdf.CellFormat(widths[0], 6, a.Array.Name, "B", 0, "L", false, 0, "")
+		pdf.CellFormat(widths[1], 6, a.Array.Vendor, "B", 0, "L", false, 0, "")
+		pdf.CellFormat(widths[2], 6, a.Array.Model, "B", 0, "L", false, 0, "")
+		pdf.SetTextColor(color[0], color[1], color[2])
+		pdf.CellFormat(widths[3], 6, a.Health, "B", 0, "L", false, 0, "")
+		pdf.SetTextColor(pdfInk[0], pdfInk[1], pdfInk[2])
+		trend := "-"
+		if a.TrendLabel != "" {
+			switch {
+			case a.TrendPct >= 15:
+				trend = fmt.Sprintf("UP %.0f%%", a.TrendPct)
+			case a.TrendPct <= -15:
+				trend = fmt.Sprintf("DOWN %.0f%%", -a.TrendPct)
+			default:
+				trend = "flat"
+			}
+		}
+		pdf.CellFormat(widths[4], 6, trend, "B", 0, "L", false, 0, "")
+		pdf.CellFormat(widths[5], 6, fmt.Sprintf("%d", a.IssueCount), "B", 1, "L", false, 0, "")
+	}
+
+	pdf.Ln(4)
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetTextColor(pdfMuted[0], pdfMuted[1], pdfMuted[2])
+	pdf.MultiCell(0, 4, "Generated by Plumb. See each system's individual report for full metric-level analysis.", "", "L", false)
+
+	return pdf.Output(w)
+}

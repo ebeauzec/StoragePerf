@@ -52,6 +52,7 @@ Plumb.
 | Component | License | Copyright | Source |
 |---|---|---|---|
 | **gopkg.in/yaml.v3** | Dual: Apache License 2.0 (original Go code) + MIT (files ported from libyaml: `apic.go`, `emitterc.go`, `parserc.go`, `readerc.go`, `scannerc.go`, `writerc.go`, `yamlh.go`, `yamlprivateh.go`) | Canonical Ltd. and/or the individual contributors; libyaml portions © the libyaml authors | https://github.com/go-yaml/yaml |
+| **github.com/go-pdf/fpdf** | MIT | The Go-PDF authors; David Barnes; Kurt Jung and contributors | https://github.com/go-pdf/fpdf |
 
 Full texts at [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt) and
 [`LICENSES/MIT.txt`](LICENSES/MIT.txt).

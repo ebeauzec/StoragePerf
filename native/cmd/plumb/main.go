@@ -30,6 +30,7 @@ import (
 
 	"plumb/internal/api"
 	"plumb/internal/config"
+	"plumb/internal/findingstore"
 	"plumb/internal/mockbackend"
 	"plumb/internal/netappnative"
 	"plumb/internal/paths"
@@ -213,6 +214,11 @@ func main() {
 	// --- initial config-derived generation (Prometheus scrape targets) ---
 	updateChecker := updates.NewChecker(os.Getenv("PLUMB_CHECK_FOR_UPDATES") != "false", version)
 
+	findings, err := findingstore.Open(layout.Data)
+	if err != nil {
+		log.Fatalf("loading findings store: %v", err)
+	}
+
 	app := &api.App{
 		Version:     version,
 		Root:        layout.Root,
@@ -228,6 +234,7 @@ func main() {
 		ONTAP:       netappnative.NewONTAPCollector(),
 		StorageGrid: netappnative.NewStorageGridCollector(),
 		MockBackend: mockbackend.New(),
+		Findings:    findings,
 	}
 	if err := app.LoadSettings(); err != nil {
 		log.Fatalf("loading settings: %v", err)
@@ -245,6 +252,14 @@ func main() {
 	stopUpdates := make(chan struct{})
 	go updateChecker.Run(24*time.Hour, stopUpdates)
 	defer close(stopUpdates)
+
+	// 5 minutes: frequent enough that a webhook fires soon after something
+	// actually goes critical, infrequent enough not to hammer VictoriaMetrics
+	// re-evaluating every array's every metric on top of the dashboard's own
+	// on-demand queries.
+	stopMonitor := make(chan struct{})
+	go app.RunMonitor(5*time.Minute, stopMonitor)
+	defer close(stopMonitor)
 
 	srv := &http.Server{Addr: "0.0.0.0:" + listenPort, Handler: app.Routes()}
 	go func() {

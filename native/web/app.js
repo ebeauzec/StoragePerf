@@ -3,12 +3,20 @@ const state = {
   selectedId: null,
   hours: 24,
   arraysConfig: [],
+  mockData: false,
   retentionPeriod: "100y",
   retentionOptions: [],
   // finding.ref values the user has expanded — kept across the 15s auto-refresh
   // (renderFleetView() replaces #findings' innerHTML wholesale every tick, which
   // would otherwise silently re-collapse anything the user had opened)
   expandedFindings: new Set(),
+  notifyEnabled: false,
+  notifyWebhookUrl: "",
+  notifyMinSeverity: "critical",
+  scheduledReportsEnabled: false,
+  scheduledReportInterval: "daily",
+  scheduleOptions: [],
+  maintenanceWindows: [],
 };
 
 // 15M is the shortest SMOOTH window given the 15s scrape interval: at
@@ -200,6 +208,11 @@ function findingHtml(f, idx) {
   const remediate = f.remediate || [];
   const hasDetail = investigate.length > 0 || remediate.length > 0;
   const isExpanded = hasDetail && state.expandedFindings.has(f.ref);
+  // The fleet-wide "Bottleneck is likely upstream" finding has no
+  // metric_id (it isn't any one metric) — nothing to acknowledge there.
+  const ackButton = f.metric_id
+    ? `<button class="btn" data-ack-array="${state.selectedId}" data-ack-metric="${f.metric_id}">Acknowledge</button>`
+    : "";
   return `<div class="finding sev-${f.severity} ${hasDetail ? "has-detail" : ""} ${isExpanded ? "expanded" : ""}" data-idx="${idx}" data-ref="${f.ref}" ${hasDetail ? `tabindex="0" role="button" aria-expanded="${isExpanded ? "true" : "false"}"` : ""}>
     <div class="finding-top">
       <span class="finding-sev">${f.severity}</span>
@@ -207,7 +220,10 @@ function findingHtml(f, idx) {
     </div>
     <div class="finding-title">${f.title}${hasDetail ? '<span class="finding-chevron">▾</span>' : ""}</div>
     <div class="finding-body">${f.body}</div>
-    <div class="finding-ref">${f.ref}</div>
+    <div class="finding-foot" style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:6px;">
+      <div class="finding-ref">${f.ref}</div>
+      ${ackButton}
+    </div>
     ${
       hasDetail
         ? `<div class="finding-detail"><div class="finding-detail-inner">
@@ -232,6 +248,102 @@ function findingHtml(f, idx) {
     }
   </div>`;
 }
+
+// Delegated (not per-button) since #findings' innerHTML is replaced
+// wholesale on every render — same reasoning as the updates-rows listener.
+document.getElementById("findings").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-ack-metric]");
+  if (!btn) return;
+  e.stopPropagation(); // don't also toggle the finding's expand/collapse
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    await api("/api/findings/ack", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ array_id: btn.dataset.ackArray, metric_id: btn.dataset.ackMetric }),
+    });
+    btn.textContent = "Acknowledged";
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Acknowledge";
+  }
+});
+
+function findingsHistoryRowHtml(h) {
+  const resolved = new Date(h.resolved_at).toLocaleString();
+  return `<div class="update-row">
+    <div>
+      <div class="update-name">${h.label} <span class="finding-tag" style="margin-left:6px;">${h.array_name || h.array_id}</span></div>
+      <div class="update-versions">was ${h.severity} · resolved ${resolved}${h.was_acked ? " · was acknowledged" : ""}</div>
+    </div>
+  </div>`;
+}
+
+async function renderFindingsHistory() {
+  const el = document.getElementById("findings-history-rows");
+  if (!el) return;
+  try {
+    const rows = await api("/api/findings/history?limit=20");
+    el.innerHTML = rows.length ? rows.map(findingsHistoryRowHtml).join("") : '<div class="empty-note">Nothing has resolved yet.</div>';
+  } catch (e) {
+    el.innerHTML = "";
+  }
+}
+
+/* ---------------- maintenance windows ---------------- */
+async function renderMaintenanceBanner() {
+  const banner = document.getElementById("maintenance-banner");
+  if (!banner || !state.selectedId) return;
+  try {
+    state.maintenanceWindows = await api("/api/maintenance");
+  } catch (e) {
+    return;
+  }
+  const now = Date.now();
+  const active = state.maintenanceWindows.find(
+    (w) => new Date(w.until).getTime() > now && (w.array_id === state.selectedId || w.array_id === "*")
+  );
+  if (!active) {
+    banner.style.display = "none";
+    return;
+  }
+  const scope = active.array_id === "*" ? "the whole fleet" : "this array";
+  banner.style.display = "block";
+  banner.innerHTML = `<div class="finding sev-watch" style="margin:10px 0;">
+    <div class="finding-title">Notifications silenced for ${scope} until ${new Date(active.until).toLocaleString()}${active.note ? " — " + active.note : ""}</div>
+    <div class="finding-body">The dashboard and reports above are unaffected — this only mutes webhook notifications.</div>
+    <button class="btn" id="maintenance-clear-btn" style="margin-top:8px;">End early</button>
+  </div>`;
+  document.getElementById("maintenance-clear-btn").addEventListener("click", async () => {
+    await api(`/api/maintenance/${encodeURIComponent(active.array_id)}`, { method: "DELETE" });
+    renderMaintenanceBanner();
+  });
+}
+
+document.getElementById("maintenance-btn").addEventListener("click", async () => {
+  if (!state.selectedId) return;
+  const array = state.fleet.find((a) => a.id === state.selectedId);
+  const scopeAll = confirm(`Silence notifications for the whole fleet? Cancel to silence just ${array ? array.name : state.selectedId}.`);
+  const hoursStr = prompt("Silence for how many hours?", "4");
+  if (!hoursStr) return;
+  const hours = Number(hoursStr);
+  if (!hours || hours <= 0) {
+    alert("Enter a positive number of hours.");
+    return;
+  }
+  const note = prompt("Optional note (e.g. \"firmware upgrade\"):", "") || "";
+  try {
+    await api("/api/maintenance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ array_id: scopeAll ? "*" : state.selectedId, hours, note }),
+    });
+    await renderMaintenanceBanner();
+  } catch (e) {
+    alert(`Could not set maintenance window: ${e.message}`);
+  }
+});
 
 function bindFindingToggles() {
   document.querySelectorAll("#findings .finding.has-detail").forEach((el) => {
@@ -258,8 +370,12 @@ async function renderFleetView() {
   const array = state.fleet.find((a) => a.id === state.selectedId);
   document.getElementById("selected-array-note").innerHTML = `Analyzing <b>${array ? array.name : state.selectedId}</b> ${array ? "· " + array.model + " · " + vendorLabel(array.vendor) : ""}`;
   document.getElementById("array-report-link").href = `/api/reports/array/${state.selectedId}?hours=${state.hours}`;
+  document.getElementById("array-report-pdf-link").href = `/api/reports/array/${state.selectedId}/pdf?hours=${state.hours}`;
   document.getElementById("array-export-link").href = `/api/export/${state.selectedId}?hours=${state.hours}`;
+  document.getElementById("array-baseline-link").href = `/api/reports/array/${state.selectedId}/suggested-thresholds`;
   document.getElementById("fleet-report-link").href = `/api/reports/fleet?hours=${state.hours}`;
+  document.getElementById("fleet-report-pdf-link").href = `/api/reports/fleet/pdf?hours=${state.hours}`;
+  await renderMaintenanceBanner();
 
   let detail;
   try {
@@ -287,6 +403,7 @@ async function renderFleetView() {
     ? findings.map((f, i) => findingHtml(f, i)).join("")
     : '<div class="empty-note">No best-practice findings for this array in the current window — everything is inside range.</div>';
   bindFindingToggles();
+  renderFindingsHistory();
 }
 
 /* ---------------- config view ---------------- */
@@ -403,7 +520,8 @@ async function loadConfigView() {
   const [arraysData, settings] = await Promise.all([api("/api/config/arrays"), api("/api/config/settings")]);
   state.arraysConfig = arraysData.arrays || [];
   renderConfigRows();
-  document.getElementById("mock-data-toggle").checked = !!settings.mock_data;
+  state.mockData = !!settings.mock_data;
+  document.getElementById("mock-data-toggle").checked = state.mockData;
 
   state.retentionPeriod = settings.retention_period || "100y";
   state.retentionOptions = settings.retention_options || [];
@@ -413,24 +531,121 @@ async function loadConfigView() {
   document.getElementById("db-size-note").textContent = formatBytes(settings.db_size_bytes);
   applyRetentionLabel();
 
-  await renderUpdatesRows();
+  state.notifyEnabled = !!settings.notify_enabled;
+  state.notifyWebhookUrl = settings.notify_webhook_url || "";
+  state.notifyMinSeverity = settings.notify_min_severity || "critical";
+  document.getElementById("notify-enabled-toggle").checked = state.notifyEnabled;
+  document.getElementById("notify-webhook-url").value = state.notifyWebhookUrl;
+  document.getElementById("notify-min-severity").value = state.notifyMinSeverity;
+
+  state.scheduledReportsEnabled = !!settings.scheduled_reports_enabled;
+  state.scheduledReportInterval = settings.scheduled_report_interval || "daily";
+  state.scheduleOptions = settings.schedule_options || [];
+  const scheduleSelect = document.getElementById("schedule-interval");
+  scheduleSelect.innerHTML = state.scheduleOptions.map((o) => `<option value="${o.value}">${o.label}</option>`).join("");
+  scheduleSelect.value = state.scheduledReportInterval;
+  document.getElementById("schedule-enabled-toggle").checked = state.scheduledReportsEnabled;
+
+  await Promise.all([renderUpdatesRows(), renderReportHistory()]);
 }
 
-// PUT /api/config/settings always writes both fields together — sending only
-// the one that changed would silently reset the other back to its zero value
-// server-side, since the handler decodes a full Settings-shaped payload.
-async function saveSettings(mockData, retentionPeriod) {
-  return api("/api/config/settings", {
+/* ---------------- notifications ---------------- */
+document.getElementById("save-notify").addEventListener("click", async () => {
+  const status = document.getElementById("notify-status");
+  try {
+    await saveSettings({
+      notify_enabled: document.getElementById("notify-enabled-toggle").checked,
+      notify_webhook_url: document.getElementById("notify-webhook-url").value.trim(),
+      notify_min_severity: document.getElementById("notify-min-severity").value,
+    });
+    status.textContent = "Saved.";
+  } catch (e) {
+    status.textContent = `Save failed: ${e.message}`;
+  }
+});
+
+document.getElementById("test-notify").addEventListener("click", async () => {
+  const status = document.getElementById("notify-status");
+  status.textContent = "Sending…";
+  try {
+    await api("/api/notify/test", { method: "POST" });
+    status.textContent = "Test webhook sent — check your destination.";
+  } catch (e) {
+    status.textContent = `Test failed: ${e.message}`;
+  }
+});
+
+/* ---------------- scheduled reports ---------------- */
+document.getElementById("save-schedule").addEventListener("click", async () => {
+  const status = document.getElementById("schedule-status");
+  try {
+    await saveSettings({
+      scheduled_reports_enabled: document.getElementById("schedule-enabled-toggle").checked,
+      scheduled_report_interval: document.getElementById("schedule-interval").value,
+    });
+    status.textContent = "Saved.";
+  } catch (e) {
+    status.textContent = `Save failed: ${e.message}`;
+  }
+});
+
+function reportHistoryRowHtml(r) {
+  const when = new Date(r.generated_at).toLocaleString();
+  return `<div class="update-row">
+    <div><div class="update-name">${when}</div><div class="update-versions">${formatBytes(r.size_bytes)}</div></div>
+    <a class="btn" href="/api/reports/history/${encodeURIComponent(r.name)}" target="_blank" rel="noopener">Open</a>
+  </div>`;
+}
+
+async function renderReportHistory() {
+  const el = document.getElementById("report-history-rows");
+  try {
+    const rows = await api("/api/reports/history");
+    el.innerHTML = rows.length
+      ? `<div class="toggle-title" style="margin-bottom:8px;">Archived reports</div>` + rows.map(reportHistoryRowHtml).join("")
+      : '<div class="empty-note">No scheduled reports generated yet.</div>';
+  } catch (e) {
+    el.innerHTML = "";
+  }
+}
+
+// PUT /api/config/settings always writes every field together — sending
+// only the one(s) that changed would silently reset the rest back to their
+// zero value server-side, since the handler decodes a full Settings-shaped
+// payload. Every caller passes only the field(s) it's actually changing;
+// this fills in the rest from state so nothing else gets clobbered.
+async function saveSettings(overrides = {}) {
+  const body = {
+    mock_data: state.mockData ?? document.getElementById("mock-data-toggle").checked,
+    retention_period: state.retentionPeriod,
+    notify_enabled: state.notifyEnabled,
+    notify_webhook_url: state.notifyWebhookUrl,
+    notify_min_severity: state.notifyMinSeverity,
+    scheduled_reports_enabled: state.scheduledReportsEnabled,
+    scheduled_report_interval: state.scheduledReportInterval,
+    ...overrides,
+  };
+  const res = await api("/api/config/settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mock_data: mockData, retention_period: retentionPeriod }),
+    body: JSON.stringify(body),
   });
+  Object.assign(state, {
+    mockData: body.mock_data,
+    retentionPeriod: body.retention_period,
+    notifyEnabled: body.notify_enabled,
+    notifyWebhookUrl: body.notify_webhook_url,
+    notifyMinSeverity: body.notify_min_severity,
+    scheduledReportsEnabled: body.scheduled_reports_enabled,
+    scheduledReportInterval: body.scheduled_report_interval,
+  });
+  return res;
 }
 
 document.getElementById("mock-data-toggle").addEventListener("change", async (e) => {
   const enabled = e.target.checked;
   try {
-    await saveSettings(enabled, state.retentionPeriod);
+    await saveSettings({ mock_data: enabled });
   } catch (err) {
     e.target.checked = !enabled; // revert on failure
     return;
@@ -462,8 +677,7 @@ document.getElementById("retention-select").addEventListener("change", async (e)
   }
 
   try {
-    const res = await saveSettings(document.getElementById("mock-data-toggle").checked, next);
-    state.retentionPeriod = res.retention_period;
+    await saveSettings({ retention_period: next });
     applyRetentionLabel();
     status.textContent = "Retention updated — the database is restarting to apply it; dashboards may show a brief gap in live data.";
   } catch (err) {

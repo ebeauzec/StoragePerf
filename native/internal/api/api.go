@@ -17,6 +17,7 @@ import (
 
 	"plumb/internal/config"
 	"plumb/internal/export"
+	"plumb/internal/findingstore"
 	"plumb/internal/mockbackend"
 	"plumb/internal/netappnative"
 	"plumb/internal/report"
@@ -43,10 +44,17 @@ type App struct {
 	ONTAP       *netappnative.ONTAPCollector
 	StorageGrid *netappnative.StorageGridCollector
 	MockBackend *mockbackend.Backend
+	Findings    *findingstore.Store // nil disables findings history/webhooks entirely (e.g. a test harness)
 
-	settingsMu sync.RWMutex
-	mockData   bool
-	retention  string
+	settingsMu              sync.RWMutex
+	mockData                bool
+	retention               string
+	notifyEnabled           bool
+	notifyWebhookURL        string
+	notifyMinSeverity       string
+	scheduledReportsEnabled bool
+	scheduledReportInterval string
+	scheduledReportHours    float64
 }
 
 // LoadSettings reads the persisted mock-data toggle and retention period at
@@ -59,6 +67,12 @@ func (a *App) LoadSettings() error {
 	a.settingsMu.Lock()
 	a.mockData = s.MockData
 	a.retention = s.EffectiveRetentionPeriod()
+	a.notifyEnabled = s.NotifyEnabled
+	a.notifyWebhookURL = s.NotifyWebhookURL
+	a.notifyMinSeverity = s.NotifyMinSeverity
+	a.scheduledReportsEnabled = s.ScheduledReportsEnabled
+	a.scheduledReportInterval = s.ScheduledReportInterval
+	a.scheduledReportHours = s.ScheduledReportHours
 	a.settingsMu.Unlock()
 	return nil
 }
@@ -85,22 +99,28 @@ func (a *App) retentionPeriod() string {
 // or stops the mock backend (see internal/mockbackend) and regenerates
 // Prometheus's scrape targets to point at the mock fleet or real
 // config/arrays.yml accordingly.
-func (a *App) saveSettings(mockData bool, retention string) error {
-	if err := config.SaveSettings(a.ConfigDir, config.Settings{MockData: mockData, RetentionPeriod: retention}); err != nil {
+func (a *App) saveSettings(s config.Settings) error {
+	if err := config.SaveSettings(a.ConfigDir, s); err != nil {
 		return err
 	}
 	a.settingsMu.Lock()
-	retentionChanged := retention != a.retention
-	mockChanged := mockData != a.mockData
-	a.mockData = mockData
-	a.retention = retention
+	retentionChanged := s.RetentionPeriod != a.retention
+	mockChanged := s.MockData != a.mockData
+	a.mockData = s.MockData
+	a.retention = s.RetentionPeriod
+	a.notifyEnabled = s.NotifyEnabled
+	a.notifyWebhookURL = s.NotifyWebhookURL
+	a.notifyMinSeverity = s.NotifyMinSeverity
+	a.scheduledReportsEnabled = s.ScheduledReportsEnabled
+	a.scheduledReportInterval = s.ScheduledReportInterval
+	a.scheduledReportHours = s.ScheduledReportHours
 	a.settingsMu.Unlock()
 
 	if retentionChanged && a.RestartVM != nil {
-		a.RestartVM(retention)
+		a.RestartVM(s.RetentionPeriod)
 	}
 	if mockChanged && a.MockBackend != nil {
-		if mockData {
+		if s.MockData {
 			if err := a.MockBackend.Start(); err != nil {
 				return err
 			}
@@ -218,12 +238,11 @@ func parseHours(r *http.Request, def float64) time.Duration {
 	return time.Duration(h * float64(time.Hour))
 }
 
-// Different vendors name their headline latency metric differently
-// (host_latency vs volume_avg_latency) — the fleet card just wants "the"
-// latency figure, so it looks for the category+role rather than a
-// hardcoded cross-vendor ID.
+// isLatencyPanel identifies the fleet card's headline latency figure —
+// shared with the fleet report's trend column via report.IsLatencyMetric so
+// both mean the same metric by "the" latency figure for a vendor.
 func isLatencyPanel(id string) bool {
-	return id == "host_latency" || id == "volume_avg_latency" || id == "metadata_query_latency" || id == "bucket_latency"
+	return report.IsLatencyMetric(id)
 }
 
 // secondaryStat picks each vendor's own best available "at a glance" second
@@ -377,18 +396,43 @@ func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	for i, o := range config.RetentionOptions {
 		options[i] = map[string]string{"value": o.Value, "label": o.Label}
 	}
+	scheduleOptions := make([]map[string]string, len(config.ScheduleOptions))
+	for i, o := range config.ScheduleOptions {
+		scheduleOptions[i] = map[string]string{"value": o.Value, "label": o.Label}
+	}
+	a.settingsMu.RLock()
+	notifyEnabled, webhookURL, minSev := a.notifyEnabled, a.notifyWebhookURL, a.notifyMinSeverity
+	schedEnabled, schedInterval := a.scheduledReportsEnabled, a.scheduledReportInterval
+	a.settingsMu.RUnlock()
+	if minSev == "" {
+		minSev = "critical"
+	}
+	if schedInterval == "" {
+		schedInterval = "daily"
+	}
 	writeJSON(w, map[string]any{
-		"mock_data":         a.mockEnabled(),
-		"retention_period":  a.retentionPeriod(),
-		"retention_options": options,
-		"db_size_bytes":     dirSize(filepath.Join(a.DataDir, "victoriametrics")),
+		"mock_data":                 a.mockEnabled(),
+		"retention_period":          a.retentionPeriod(),
+		"retention_options":         options,
+		"db_size_bytes":             dirSize(filepath.Join(a.DataDir, "victoriametrics")),
+		"notify_enabled":            notifyEnabled,
+		"notify_webhook_url":        webhookURL,
+		"notify_min_severity":       minSev,
+		"scheduled_reports_enabled": schedEnabled,
+		"scheduled_report_interval": schedInterval,
+		"schedule_options":          scheduleOptions,
 	})
 }
 
 func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
-		MockData        bool   `json:"mock_data"`
-		RetentionPeriod string `json:"retention_period"`
+		MockData                bool   `json:"mock_data"`
+		RetentionPeriod         string `json:"retention_period"`
+		NotifyEnabled           bool   `json:"notify_enabled"`
+		NotifyWebhookURL        string `json:"notify_webhook_url"`
+		NotifyMinSeverity       string `json:"notify_min_severity"`
+		ScheduledReportsEnabled bool   `json:"scheduled_reports_enabled"`
+		ScheduledReportInterval string `json:"scheduled_report_interval"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		httpError(w, 400, err)
@@ -398,11 +442,35 @@ func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, fmt.Errorf("invalid retention_period %q", payload.RetentionPeriod))
 		return
 	}
-	if err := a.saveSettings(payload.MockData, payload.RetentionPeriod); err != nil {
+	if payload.NotifyMinSeverity == "" {
+		payload.NotifyMinSeverity = "critical"
+	}
+	if !config.ValidNotifySeverity(payload.NotifyMinSeverity) {
+		httpError(w, 400, fmt.Errorf("invalid notify_min_severity %q", payload.NotifyMinSeverity))
+		return
+	}
+	if payload.NotifyEnabled && payload.NotifyWebhookURL == "" {
+		httpError(w, 400, fmt.Errorf("notify_webhook_url is required to enable notifications"))
+		return
+	}
+	if payload.ScheduledReportInterval == "" {
+		payload.ScheduledReportInterval = "daily"
+	}
+	if !config.ValidScheduleInterval(payload.ScheduledReportInterval) {
+		httpError(w, 400, fmt.Errorf("invalid scheduled_report_interval %q", payload.ScheduledReportInterval))
+		return
+	}
+	s := config.Settings{
+		MockData: payload.MockData, RetentionPeriod: payload.RetentionPeriod,
+		NotifyEnabled: payload.NotifyEnabled, NotifyWebhookURL: payload.NotifyWebhookURL, NotifyMinSeverity: payload.NotifyMinSeverity,
+		ScheduledReportsEnabled: payload.ScheduledReportsEnabled, ScheduledReportInterval: payload.ScheduledReportInterval,
+		ScheduledReportHours: config.ScheduleReportHours(payload.ScheduledReportInterval),
+	}
+	if err := a.saveSettings(s); err != nil {
 		httpError(w, 500, err)
 		return
 	}
-	writeJSON(w, map[string]any{"mock_data": payload.MockData, "retention_period": payload.RetentionPeriod})
+	writeJSON(w, map[string]any{"saved": true})
 }
 
 func (a *App) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -611,7 +679,7 @@ func (a *App) handleFleetReport(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		summaries = append(summaries, report.FleetArraySummary{Array: rep.Array, Health: rep.Health, IssueCount: rep.IssueCount})
+		summaries = append(summaries, report.FleetArraySummary{Array: rep.Array, Health: rep.Health, IssueCount: rep.IssueCount, TrendPct: rep.TrendPct, TrendLabel: rep.TrendLabel})
 	}
 	fleetRep := report.BuildFleetReport(summaries, start, end)
 	w.Header().Set("Content-Type", "text/html")
@@ -635,6 +703,18 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/backup", a.handleBackup)
 	mux.HandleFunc("GET /api/reports/array/{id}", a.handleArrayReport)
 	mux.HandleFunc("GET /api/reports/fleet", a.handleFleetReport)
+	mux.HandleFunc("GET /api/reports/array/{id}/pdf", a.handleArrayReportPDF)
+	mux.HandleFunc("GET /api/reports/fleet/pdf", a.handleFleetReportPDF)
+	mux.HandleFunc("GET /api/reports/array/{id}/suggested-thresholds", a.handleSuggestedThresholds)
+	mux.HandleFunc("GET /api/reports/history", a.handleReportHistory)
+	mux.HandleFunc("GET /api/reports/history/{name}", a.handleReportHistoryFile)
+	mux.HandleFunc("GET /api/findings", a.handleFindings)
+	mux.HandleFunc("GET /api/findings/history", a.handleFindingsHistory)
+	mux.HandleFunc("POST /api/findings/ack", a.handleAckFinding)
+	mux.HandleFunc("GET /api/maintenance", a.handleGetMaintenance)
+	mux.HandleFunc("POST /api/maintenance", a.handleSetMaintenance)
+	mux.HandleFunc("DELETE /api/maintenance/{id}", a.handleClearMaintenance)
+	mux.HandleFunc("POST /api/notify/test", a.handleNotifyTest)
 	mockbackend.RegisterPureRoutes(mux) // inert unless targets.go points at them (mock mode on) — see internal/mockbackend
 	mux.Handle("/", http.FileServerFS(a.Frontend))
 	return mux

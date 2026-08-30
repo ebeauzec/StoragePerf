@@ -63,11 +63,16 @@ type NodeValue struct {
 }
 
 type Finding struct {
-	Severity    Severity `json:"severity"`
-	Tag         string   `json:"tag"`
-	Title       string   `json:"title"`
-	Body        string   `json:"body"`
-	Ref         string   `json:"ref"`
+	Severity Severity `json:"severity"`
+	Tag      string   `json:"tag"`
+	Title    string   `json:"title"`
+	Body     string   `json:"body"`
+	Ref      string   `json:"ref"`
+	// MetricID is empty for the derived cross-panel "Bottleneck is likely
+	// upstream" finding (it isn't any one metric) and set for every
+	// per-metric finding — the acknowledge API needs an exact ID rather
+	// than a caller re-parsing Ref's "<arrayID> · <metricID>" display format.
+	MetricID    string   `json:"metric_id,omitempty"`
 	Investigate []string `json:"investigate"`
 	Remediate   []string `json:"remediate"`
 }
@@ -218,6 +223,7 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 			Severity: p.Severity, Tag: m.Category, Title: m.Label,
 			Body:        formatTemplate(tmpl, *p.Value, threshold),
 			Ref:         fmt.Sprintf("%s · %s", arrayID, m.ID),
+			MetricID:    m.ID,
 			Investigate: m.Investigate,
 			Remediate:   m.Remediate,
 		})
@@ -285,17 +291,19 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 // Stats summarizes one metric's series over a report period — the basis
 // for the "comprehensive analysis at every level" report requirement.
 type Stats struct {
-	MetricID       string
-	Label          string
-	Unit           string
-	Category       string
-	Min, Avg, Max  float64
-	P95            float64
-	WatchPct       float64 // fraction of samples at/above watch
-	CriticalPct    float64
-	TrendPct       float64 // % change, first quarter avg -> last quarter avg
-	ThresholdLabel string
-	SampleCount    int
+	MetricID         string
+	Label            string
+	Unit             string
+	Category         string
+	Min, Avg, Max    float64
+	P90, P95, P99    float64
+	WatchPct         float64 // fraction of samples at/above watch
+	CriticalPct      float64
+	TrendPct         float64 // % change, first quarter avg -> last quarter avg
+	ThresholdLabel   string
+	SeverityWatch    float64
+	SeverityCritical float64
+	SampleCount      int
 }
 
 func Percentile(sorted []float64, p float64) float64 {
@@ -307,7 +315,8 @@ func Percentile(sorted []float64, p float64) float64 {
 }
 
 func Summarize(m config.MetricDef, pts []vm.Point) Stats {
-	s := Stats{MetricID: m.ID, Label: m.Label, Unit: m.Unit, Category: m.Category, ThresholdLabel: m.ThresholdLabel, SampleCount: len(pts)}
+	s := Stats{MetricID: m.ID, Label: m.Label, Unit: m.Unit, Category: m.Category, ThresholdLabel: m.ThresholdLabel, SampleCount: len(pts),
+		SeverityWatch: m.SeverityWatch, SeverityCritical: m.SeverityCritical}
 	if len(pts) == 0 {
 		return s
 	}
@@ -336,7 +345,9 @@ func Summarize(m config.MetricDef, pts []vm.Point) Stats {
 
 	sorted := append([]float64(nil), values...)
 	sort.Float64s(sorted)
+	s.P90 = Percentile(sorted, 0.90)
 	s.P95 = Percentile(sorted, 0.95)
+	s.P99 = Percentile(sorted, 0.99)
 
 	quarter := len(pts) / 4
 	if quarter > 0 {

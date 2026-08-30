@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -134,6 +135,58 @@ func thresholdsFileName(vendor string) string {
 type Settings struct {
 	MockData        bool   `yaml:"mock_data"`
 	RetentionPeriod string `yaml:"retention_period,omitempty"`
+
+	NotifyEnabled     bool   `yaml:"notify_enabled,omitempty"`
+	NotifyWebhookURL  string `yaml:"notify_webhook_url,omitempty"`
+	NotifyMinSeverity string `yaml:"notify_min_severity,omitempty"` // "watch" | "critical"
+
+	ScheduledReportsEnabled bool    `yaml:"scheduled_reports_enabled,omitempty"`
+	ScheduledReportInterval string  `yaml:"scheduled_report_interval,omitempty"` // "daily" | "weekly"
+	ScheduledReportHours    float64 `yaml:"scheduled_report_hours,omitempty"`    // period each generated report covers
+}
+
+// ScheduleOptions is the whitelist the Config tab's schedule-frequency
+// dropdown offers — each pairs how often a report is generated with how
+// much history it covers, since a daily report covering 30 days would be
+// almost entirely a repeat of the previous day's.
+var ScheduleOptions = []struct {
+	Value, Label string
+	Interval     time.Duration
+	ReportHours  float64
+}{
+	{"daily", "Daily (last 24h)", 24 * time.Hour, 24},
+	{"weekly", "Weekly (last 7d)", 7 * 24 * time.Hour, 24 * 7},
+}
+
+func ValidScheduleInterval(v string) bool {
+	for _, o := range ScheduleOptions {
+		if o.Value == v {
+			return true
+		}
+	}
+	return false
+}
+
+func ScheduleIntervalDuration(v string) time.Duration {
+	for _, o := range ScheduleOptions {
+		if o.Value == v {
+			return o.Interval
+		}
+	}
+	return 24 * time.Hour
+}
+
+func ScheduleReportHours(v string) float64 {
+	for _, o := range ScheduleOptions {
+		if o.Value == v {
+			return o.ReportHours
+		}
+	}
+	return 24
+}
+
+func ValidNotifySeverity(v string) bool {
+	return v == "watch" || v == "critical"
 }
 
 // DefaultRetentionPeriod matches VictoriaMetrics's own default of keeping

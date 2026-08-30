@@ -38,6 +38,7 @@
       <div style="display:flex; align-items:center; gap:14px;">
         <div class="section-note" id="fleet-summary"></div>
         <a class="btn" id="fleet-report-link" href="#" target="_blank" rel="noopener">Fleet report</a>
+        <a class="btn" id="fleet-report-pdf-link" href="#" download>Fleet PDF</a>
       </div>
     </div>
     <div class="fleet-scroll" id="fleet-strip"></div>
@@ -46,11 +47,15 @@
       <div class="range-pills" id="range-pills"></div>
       <div class="retention-note" id="selected-array-note"></div>
       <div class="retention-note" id="retention-note">Retained history: <b>—</b> (VictoriaMetrics) · 15s native resolution</div>
-      <div style="display:flex; gap:8px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <a class="btn" id="array-report-link" href="#" target="_blank" rel="noopener">Report</a>
+        <a class="btn" id="array-report-pdf-link" href="#" download>PDF</a>
         <a class="btn" id="array-export-link" href="#" download>Export CSV</a>
+        <a class="btn" id="array-baseline-link" href="#" target="_blank" rel="noopener">Suggested thresholds</a>
+        <button class="btn" id="maintenance-btn">Silence notifications…</button>
       </div>
     </div>
+    <div id="maintenance-banner" style="display:none;"></div>
 
     <div class="split">
       <div>
@@ -76,6 +81,12 @@
       <div class="section-note">Evaluated against this system's vendor thresholds on every load</div>
     </div>
     <div class="findings-grid" id="findings"></div>
+
+    <div class="section-head">
+      <div class="section-title">Recently Resolved</div>
+      <div class="section-note">The last findings that returned to normal, fleet-wide — from the persistent findings history</div>
+    </div>
+    <div id="findings-history-rows"></div>
   </div>
 
   <div id="view-config" style="display:none;">
@@ -110,6 +121,65 @@
         <select id="retention-select" class="retention-select"></select>
       </div>
       <div id="retention-status" class="section-note"></div>
+    </div>
+
+    <div class="section-head">
+      <div class="section-title">Notifications</div>
+      <div class="section-note">A background check every 5 minutes posts a webhook when a metric newly crosses watch/critical, or recovers</div>
+    </div>
+    <div class="config-card retention-card">
+      <div class="toggle-row" style="padding:0 0 14px;">
+        <div class="toggle-row-text">
+          <div class="toggle-title">Enable webhook notifications</div>
+          <div class="toggle-desc">A plain HTTP POST with a JSON body (including a "text" field Slack's incoming-webhook integration renders directly) — works with Slack, Microsoft Teams, PagerDuty (via its Events API v2 proxy), or any automation tool that accepts a webhook.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="notify-enabled-toggle">
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+      </div>
+      <div class="retention-row">
+        <div class="toggle-row-text"><div class="toggle-title">Webhook URL</div></div>
+        <input id="notify-webhook-url" placeholder="https://hooks.slack.com/services/..." style="flex:1; min-width:280px;">
+      </div>
+      <div class="retention-row">
+        <div class="toggle-row-text"><div class="toggle-title">Minimum severity to notify on</div></div>
+        <select id="notify-min-severity" class="retention-select">
+          <option value="critical">Critical only</option>
+          <option value="watch">Watch and critical</option>
+        </select>
+      </div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+        <button class="btn btn-primary" id="save-notify">Save</button>
+        <button class="btn" id="test-notify">Send test webhook</button>
+        <span id="notify-status" class="section-note"></span>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <div class="section-title">Scheduled Reports</div>
+      <div class="section-note">Automatically generates and archives a fleet report on a schedule — browse past ones below</div>
+    </div>
+    <div class="config-card retention-card">
+      <div class="toggle-row" style="padding:0 0 14px;">
+        <div class="toggle-row-text">
+          <div class="toggle-title">Enable scheduled reports</div>
+          <div class="toggle-desc">Saved to data/reports/ (last 60 kept). If notifications are also enabled above, a summary is posted to your webhook each time one is generated.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="schedule-enabled-toggle">
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+      </div>
+      <div class="retention-row">
+        <div class="toggle-row-text"><div class="toggle-title">Frequency</div></div>
+        <select id="schedule-interval" class="retention-select"></select>
+      </div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+        <button class="btn btn-primary" id="save-schedule">Save</button>
+        <span id="schedule-status" class="section-note"></span>
+      </div>
+      <div id="report-history-rows" style="margin-top:16px;"></div>
     </div>
 
     <div class="section-head">

@@ -1,10 +1,13 @@
 # Reports & Data Export
 
 Plumb generates two kinds of report and one kind of raw export, all computed
-on demand from VictoriaMetrics's stored history — none of it depends on a
-separate "findings log" being kept over time. This document explains what
-each contains, how the numbers are computed, and how to read the written
-analysis.
+on demand from VictoriaMetrics's stored history — the report content itself
+doesn't depend on a separate "findings log" being kept over time (a
+findings history store does now exist, but it's for cross-restart
+acknowledgment and webhook notifications — see [Section 7](#7-scheduled-reports-suggested-thresholds-and-pdf-export)
+— reports are still computed fresh from raw metric history on every
+request). This document explains what each contains, how the numbers are
+computed, and how to read the written analysis.
 
 ## Table of Contents
 
@@ -14,6 +17,7 @@ analysis.
 4. [How the Numbers Are Computed](#4-how-the-numbers-are-computed)
 5. [How the Written Analysis Is Generated](#5-how-the-written-analysis-is-generated)
 6. [Reading a Report as Evidence, Not Just a Summary](#6-reading-a-report-as-evidence-not-just-a-summary)
+7. [Scheduled Reports, Suggested Thresholds, and PDF Export](#7-scheduled-reports-suggested-thresholds-and-pdf-export)
 
 ---
 
@@ -157,11 +161,41 @@ particular:
   — if you haven't tuned `severity_watch`/`severity_critical` for a
   workload, the report's severity language inherits whatever bias the
   shipped defaults have for that workload.
-- The report doesn't know about maintenance windows, planned rebuilds, or
-  scheduled batch jobs — a "sustained critical" reading during a known
-  maintenance window isn't a surprise finding, it's expected behavior the
-  report has no way to distinguish from a real problem.
+- The report doesn't know about planned rebuilds or scheduled batch jobs —
+  a "sustained critical" reading during expected activity isn't a surprise
+  finding, it's expected behavior the report has no way to distinguish from
+  a real problem. A Config-tab maintenance window (`internal/maintenance`)
+  can mute *webhook notifications* for a known disruption, but deliberately
+  does not touch report content or dashboard panels — a report generated
+  during a muted window still shows exactly what happened, not a version
+  edited to look quiet.
 - For anything going into a formal incident record, change ticket, or
   vendor escalation, pair the report with the CSV export
   ([Section 3](#3-csv-export)) so the raw numbers are auditable independent
   of the generated prose.
+
+## 7. Scheduled Reports, Suggested Thresholds, and PDF Export
+
+**Scheduled reports** (Config tab → Scheduled Reports) generate and archive
+a fleet report automatically on a daily or weekly cadence, saved under
+`data/reports/` (the last 60 kept) and browsable from the same section —
+`GET /api/reports/history` lists them, `GET /api/reports/history/{name}`
+serves one. Whether one is due is determined by inspecting the newest
+archived file's timestamp, not a separately tracked "last ran" value, so a
+restart never produces a duplicate report just because in-memory state
+reset.
+
+**Suggested thresholds** (`GET /api/reports/array/{id}/suggested-thresholds`,
+default a 30-day window) computes, per metric, this specific array's own
+observed P90/P95/P99 and max, alongside its currently configured watch/
+critical — the number every vendor threshold file's comment already tells
+you to go find, computed rather than left as homework. It's advisory only:
+nothing here writes back to `config/thresholds/*.yml`, since a suggestion
+based on 30 days that happened to include a real incident would otherwise
+silently normalize that incident into the new baseline.
+
+**PDF export** (`GET /api/reports/array/{id}/pdf`, `GET /api/reports/fleet/pdf`,
+also linked from the toolbar) renders the same analysis as the HTML report
+into a downloadable PDF, for sharing outside a running Plumb instance —
+email, a ticket attachment, printing — where linking to the live page isn't
+an option.
