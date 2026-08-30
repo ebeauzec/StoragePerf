@@ -574,7 +574,8 @@ func (a *App) buildArrayReport(id string, window time.Duration) (report.ArrayRep
 		}
 		allStats = append(allStats, rules.Summarize(m, pts))
 	}
-	return report.BuildArrayReport(arr, allStats, start, end), nil
+	expectedSamples := int(window / step)
+	return report.BuildArrayReport(arr, allStats, start, end, expectedSamples), nil
 }
 
 func (a *App) handleArrayReport(w http.ResponseWriter, r *http.Request) {

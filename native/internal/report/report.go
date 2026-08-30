@@ -32,6 +32,13 @@ type ArrayReport struct {
 	Backend     []MetricNarrative
 	IssueCount  int
 	Health      string
+	// CoverageNote is non-empty when the actual retained data covers
+	// meaningfully less than PeriodStart–PeriodEnd (a recently added array,
+	// or a retention period shorter than the requested report window) — the
+	// header above still states the full requested period, so without this
+	// the report would silently understate its own window rather than
+	// making that explicit.
+	CoverageNote string
 }
 
 func narrate(s rules.Stats) MetricNarrative {
@@ -82,9 +89,34 @@ func narrate(s rules.Stats) MetricNarrative {
 	return MetricNarrative{Stats: s, Severity: sev, Analysis: text}
 }
 
-func BuildArrayReport(arr config.Array, allStats []rules.Stats, start, end time.Time) ArrayReport {
+// humanDuration renders a duration the way a reader estimating "how much
+// data is this, really" would want to see it — not the sub-second precision
+// time.Duration.String() gives.
+func humanDuration(d time.Duration) string {
+	switch {
+	case d >= 24*time.Hour:
+		return fmt.Sprintf("%.1f days", d.Hours()/24)
+	case d >= time.Hour:
+		return fmt.Sprintf("%.1f hours", d.Hours())
+	default:
+		return fmt.Sprintf("%.0f minutes", d.Minutes())
+	}
+}
+
+// BuildArrayReport turns pre-summarized stats into a report. expectedSamples
+// is how many evenly-spaced samples the requested start–end window/step
+// should contain if fully covered by retained data — compared against the
+// most complete metric's actual SampleCount to detect when the array's real
+// history (retention limit, or monitoring simply started more recently than
+// the requested period) is shorter than what PeriodStart/PeriodEnd implies.
+// Pass 0 to skip this check (e.g. a caller without a fixed step size).
+func BuildArrayReport(arr config.Array, allStats []rules.Stats, start, end time.Time, expectedSamples int) ArrayReport {
 	rep := ArrayReport{Array: arr, GeneratedAt: time.Now(), PeriodStart: start, PeriodEnd: end, Health: "good"}
+	maxSamples := 0
 	for _, s := range allStats {
+		if s.SampleCount > maxSamples {
+			maxSamples = s.SampleCount
+		}
 		n := narrate(s)
 		if n.Severity == "critical" {
 			rep.Health = "critical"
@@ -100,6 +132,21 @@ func BuildArrayReport(arr config.Array, allStats []rules.Stats, start, end time.
 			rep.Backend = append(rep.Backend, n)
 		}
 	}
+
+	// Only flag a genuine shortfall (skip metrics that simply have no data
+	// at all — narrate() already says so per-metric) and only once it's
+	// large enough to matter, not scrape jitter or a few missed polls.
+	if expectedSamples > 0 && maxSamples > 0 && maxSamples < expectedSamples*9/10 {
+		requested := end.Sub(start)
+		actual := time.Duration(float64(requested) * float64(maxSamples) / float64(expectedSamples))
+		rep.CoverageNote = fmt.Sprintf(
+			"Only %s of the %s period requested above has retained data (%d of an expected ~%d samples). "+
+				"That's most likely because monitoring for this system started more recently than that, or "+
+				"your configured retention period (Config tab) is shorter than this report's window. The "+
+				"figures below reflect only the %s actually available, not the full period stated above.",
+			humanDuration(actual), humanDuration(requested), maxSamples, expectedSamples, humanDuration(actual))
+	}
+
 	return rep
 }
 
@@ -190,6 +237,12 @@ var arrayTmpl = template.Must(template.New("array").Funcs(template.FuncMap{"pill
     Overall status this period: <span class="pill {{pillClass .Health}}">{{.Health}}</span>
     {{if gt .IssueCount 0}} — {{.IssueCount}} metric(s) crossed a threshold at least once.{{else}} — no metric crossed its illustrative threshold.{{end}}
   </div>
+
+  {{if .CoverageNote}}
+  <div class="summary-line" style="border:1px solid var(--watch); background:rgba(169,102,10,0.1);">
+    <strong>Limited data coverage:</strong> {{.CoverageNote}}
+  </div>
+  {{end}}
 
   <h2>Front-End — SAN &amp; Host Path</h2>
   {{range .Frontend}}
