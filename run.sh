@@ -84,6 +84,17 @@ else
   tar -xzf "$tmp/$asset_name" -C "$DEST" --strip-components=1
   rm -rf "$tmp"
 
+  # Scoped to the freshly-extracted files, before the (possibly large,
+  # possibly slow-to-traverse on a cloud-synced folder) preserved data/
+  # directory gets moved back in below — there is nothing to strip from a
+  # database this script already had on disk, and re-scanning it on every
+  # single launch (not just a fresh install) was a real, needless cost on
+  # anything other than a fast local disk. See this file's header comment
+  # for why this is a defensive no-op even for the files it does scan.
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+  fi
+
   if [ -d "$preserve/data" ]; then
     echo "==> Restoring existing metrics database"
     mv "$preserve/data" "$DEST/data"
@@ -93,10 +104,6 @@ else
   rm -rf "$preserve"
 
   echo "$tag" > "$marker"
-fi
-
-if command -v xattr >/dev/null 2>&1; then
-  xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 fi
 
 echo "==> Starting Plumb — http://localhost:8000"

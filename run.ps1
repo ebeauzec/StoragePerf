@@ -73,6 +73,15 @@ if ($alreadyInstalled) {
     Remove-Item -Recurse -Force $tempExtract
     Remove-Item $zipPath
 
+    # Scoped to the freshly-extracted files, before the (possibly large)
+    # preserved data/ directory gets moved back in below — there's nothing
+    # to unblock in a database this script already had on disk, and
+    # recursively unblocking it on every single launch (not just a fresh
+    # install) was a real, needless cost, especially on a cloud-synced
+    # folder (OneDrive/Google Drive) where every file operation is far
+    # slower than on a local disk.
+    Get-ChildItem -Path $Dest -Recurse | Unblock-File
+
     if (Test-Path (Join-Path $preserve "data")) {
         Write-Host "==> Restoring existing metrics database"
         Move-Item (Join-Path $preserve "data") (Join-Path $Dest "data")
@@ -85,8 +94,6 @@ if ($alreadyInstalled) {
 
     Set-Content -Path $marker -Value $tag
 }
-
-Get-ChildItem -Path $Dest -Recurse | Unblock-File
 
 Write-Host "==> Starting Plumb - http://localhost:8000"
 Push-Location $Dest
