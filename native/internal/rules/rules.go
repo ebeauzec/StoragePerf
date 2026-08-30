@@ -55,17 +55,36 @@ func Classify(value float64, ok bool, watch, critical float64) Severity {
 	return Good
 }
 
+// classifyPanel is Classify plus the Informational downgrade: a metric
+// where higher isn't inherently worse (see config.MetricDef.Informational)
+// never reports Watch/Critical, no matter how far above its illustrative
+// reference line the value sits — Unknown still passes through unchanged,
+// since "no data" is worth showing regardless.
+func classifyPanel(value float64, ok bool, watch, critical float64, informational bool) Severity {
+	sev := Classify(value, ok, watch, critical)
+	if informational && sev != Unknown {
+		return Good
+	}
+	return sev
+}
+
 type Panel struct {
-	ID             string       `json:"id"`
-	Label          string       `json:"label"`
-	Unit           string       `json:"unit"`
-	Category       string       `json:"category"`
-	Value          *float64     `json:"value"`
-	Severity       Severity     `json:"severity"`
-	ThresholdLabel string       `json:"threshold_label"`
-	Watch          float64      `json:"watch"`
-	Critical       float64      `json:"critical"`
-	Series         [][2]float64 `json:"series"`
+	ID             string   `json:"id"`
+	Label          string   `json:"label"`
+	Unit           string   `json:"unit"`
+	Category       string   `json:"category"`
+	Value          *float64 `json:"value"`
+	Severity       Severity `json:"severity"`
+	ThresholdLabel string   `json:"threshold_label"`
+	Watch          float64  `json:"watch"`
+	Critical       float64  `json:"critical"`
+	// Informational mirrors config.MetricDef.Informational — the frontend
+	// uses it to skip the alarming badge styling and the chart's threshold
+	// line for a metric where higher isn't inherently worse (see that
+	// field's own doc comment for why Watch/Critical still exist here
+	// anyway).
+	Informational bool         `json:"informational,omitempty"`
+	Series        [][2]float64 `json:"series"`
 	// Nodes is only present for a metric with NodeBreakdownQuery set (see
 	// config.MetricDef) — a multi-node system's per-node values for this
 	// same metric, worst (highest) first, so a grid/cluster-wide finding
@@ -156,7 +175,7 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 		if err != nil {
 			return Result{}, fmt.Errorf("querying %s: %w", m.ID, err)
 		}
-		sev := Classify(value, ok, m.SeverityWatch, m.SeverityCritical)
+		sev := classifyPanel(value, ok, m.SeverityWatch, m.SeverityCritical, m.Informational)
 
 		pts, err := client.RangeQuery(query, start, now, step)
 		if err != nil {
@@ -185,7 +204,7 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 				if node == "" {
 					continue
 				}
-				nodes = append(nodes, NodeValue{Node: node, Value: p.Value, Severity: Classify(p.Value, true, m.SeverityWatch, m.SeverityCritical)})
+				nodes = append(nodes, NodeValue{Node: node, Value: p.Value, Severity: classifyPanel(p.Value, true, m.SeverityWatch, m.SeverityCritical, m.Informational)})
 			}
 			sort.Slice(nodes, func(i, j int) bool { return nodes[i].Value > nodes[j].Value })
 		}
@@ -194,7 +213,7 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 			ID: m.ID, Label: m.Label, Unit: m.Unit, Category: m.Category,
 			Value: valPtr, Severity: sev, ThresholdLabel: m.ThresholdLabel,
 			Watch: m.SeverityWatch, Critical: m.SeverityCritical, Series: series,
-			Nodes: nodes,
+			Informational: m.Informational, Nodes: nodes,
 		})
 	}
 

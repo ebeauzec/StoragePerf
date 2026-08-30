@@ -185,6 +185,7 @@ metrics:
     query: 'rate(storagegrid_s3_data_transfers_bytes_ingested{array="{array}"}[5m]) / 1000000'
     node_breakdown_query: 'storagegrid_s3_bytes_ingested_by_node_per_sec{array="{array}"} / 1000000'
     comparison: gt
+    informational: true
     severity_watch: 500
     severity_critical: 1000
     threshold_label: "illustrative only — set from your own baseline"
@@ -206,6 +207,7 @@ metrics:
     query: 'rate(storagegrid_s3_data_transfers_bytes_retrieved{array="{array}"}[5m]) / 1000000'
     node_breakdown_query: 'storagegrid_s3_bytes_retrieved_by_node_per_sec{array="{array}"} / 1000000'
     comparison: gt
+    informational: true
     severity_watch: 500
     severity_critical: 1000
     threshold_label: "illustrative only — set from your own baseline"
@@ -236,6 +238,7 @@ metrics:
     query: 'rate(storagegrid_s3_operations_get{array="{array}"}[5m]) * 60'
     node_breakdown_query: 'storagegrid_s3_get_by_node_per_min{array="{array}"}'
     comparison: gt
+    informational: true
     severity_watch: 100000
     severity_critical: 200000
     threshold_label: "illustrative only — set from your own baseline (sourced from a private metric — see comment)"
@@ -257,6 +260,7 @@ metrics:
     query: 'rate(storagegrid_s3_operations_put{array="{array}"}[5m]) * 60'
     node_breakdown_query: 'storagegrid_s3_put_by_node_per_min{array="{array}"}'
     comparison: gt
+    informational: true
     severity_watch: 100000
     severity_critical: 200000
     threshold_label: "illustrative only — set from your own baseline (sourced from a private metric — see comment)"

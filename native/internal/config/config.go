@@ -119,6 +119,17 @@ type MetricDef struct {
 	// internal/netappnative/storagegrid.go's `_by_node` metrics for where
 	// the underlying per-node series come from.
 	NodeBreakdownQuery string `yaml:"node_breakdown_query,omitempty"`
+
+	// Informational marks a metric where higher is not inherently worse —
+	// IOPS, bandwidth, ops/sec panels shipped as "workload characterization"
+	// (their own threshold_label says "illustrative only — set from your
+	// own baseline", an admission the number means nothing on its own).
+	// SeverityWatch/Critical still exist for these (the chart still needs
+	// a reference line, and Suggested Thresholds still wants a P90/P99 to
+	// compare against), but rules.Classify never returns Watch/Critical for
+	// one — a "critical" badge on "throughput is high" is actively
+	// misleading, not a fact worth alarming on.
+	Informational bool `yaml:"informational,omitempty"`
 }
 
 type thresholdsFile struct {

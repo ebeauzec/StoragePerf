@@ -204,6 +204,22 @@ shipped defaults. A threshold copied from this repository without
 adjustment is a reasonable *starting* alarm, not a validated one for your
 environment.
 
+**"Illustrative" is not the same as "no ceiling exists."** For latency,
+queue depth, capacity, CPU/disk busy, and error rates, higher genuinely is
+worse — the threshold's exact number is a starting guess, but the direction
+is real. For IOPS, bandwidth, and ops/sec panels (marked
+`informational: true` in the config, and "illustrative only — set from your
+own baseline" in their `threshold_label`), there is no direction at all:
+more throughput isn't a problem to fix, it's just more throughput. These
+panels carry a `severity_watch`/`severity_critical` purely so Suggested
+Thresholds and the chart's reference line have something to compare
+against — `rules.Classify` never lets one of these report Watch or
+Critical, no matter how far above that number the value sits, and the
+dashboard shows a neutral "info" badge instead of a colored severity one.
+Use them the way their own investigate text says to: correlate against a
+latency panel in the same window (did latency rise because load rose, or
+didn't it?), not as a standalone alarm.
+
 ---
 
 ## 7. The Correlation Finding — How Plumb Decides "Upstream" vs. "Internal"

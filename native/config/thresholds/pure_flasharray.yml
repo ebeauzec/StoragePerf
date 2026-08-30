@@ -135,6 +135,7 @@ metrics:
     # alert to tune to on its own.
     query: 'sum(purefa_array_performance_throughput_iops{array="{array}",dimension="reads_per_sec"})'
     comparison: gt
+    informational: true
     severity_watch: 100000
     severity_critical: 200000
     threshold_label: "illustrative only — set from your own baseline"
@@ -155,6 +156,7 @@ metrics:
     unit: ops
     query: 'sum(purefa_array_performance_throughput_iops{array="{array}",dimension="writes_per_sec"})'
     comparison: gt
+    informational: true
     severity_watch: 100000
     severity_critical: 200000
     threshold_label: "illustrative only — set from your own baseline"
@@ -178,6 +180,7 @@ metrics:
     # Same workload-characterization framing as the IOPS panels above.
     query: 'sum(purefa_array_performance_bandwidth_bytes{array="{array}",dimension="read_bytes_per_sec"}) / 1000000'
     comparison: gt
+    informational: true
     severity_watch: 1000
     severity_critical: 2000
     threshold_label: "illustrative only — set from your own baseline"
@@ -197,6 +200,7 @@ metrics:
     unit: "MB/s"
     query: 'sum(purefa_array_performance_bandwidth_bytes{array="{array}",dimension="write_bytes_per_sec"}) / 1000000'
     comparison: gt
+    informational: true
     severity_watch: 1000
     severity_critical: 2000
     threshold_label: "illustrative only — set from your own baseline"
@@ -313,6 +317,7 @@ metrics:
     # replication_lag above, not an alert to tune on its own.
     query: 'sum(purefa_pod_replica_links_performance_bandwidth_bytes{array="{array}",dimension="bytes_per_sec_total"}) / 1000000'
     comparison: gt
+    informational: true
     severity_watch: 1000
     severity_critical: 2000
     threshold_label: "illustrative only — set from your own baseline"

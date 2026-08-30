@@ -257,6 +257,7 @@ metrics:
     # snapmirror_lag and everything else here is unaffected.
     query: 'rate(snapmirror_bandwidth_bytes{array="{array}"}[5m]) / 1000000'
     comparison: gt
+    informational: true
     severity_watch: 500
     severity_critical: 1000
     threshold_label: "illustrative only — set from your own baseline (sourced from an unsupported private API — see comment)"

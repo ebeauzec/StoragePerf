@@ -161,7 +161,16 @@ function renderRangePills() {
 /* ---------------- panels + findings for selected array ---------------- */
 function panelHtml(p, systemLabel) {
   const color = p.category === "frontend" ? "#45d0c4" : "#7c8fef";
-  const badgeClass = p.severity === "critical" ? "badge-critical" : p.severity === "watch" ? "badge-watch" : "badge-good";
+  // Informational panels (IOPS/bandwidth/ops-rate — "workload characterization,
+  // not an alert to tune on its own", per each metric's own config comment)
+  // never carry watch/critical severity from the API, but still deserve a
+  // visibly different treatment from a real health check: a plain "good"
+  // badge would read as "this passed a threshold," when there was never a
+  // meaningful threshold to pass. No dotted reference line on the chart
+  // either, for the same reason — it would imply a ceiling that isn't real.
+  const badgeClass = p.informational ? "badge-info" : p.severity === "critical" ? "badge-critical" : p.severity === "watch" ? "badge-watch" : "badge-good";
+  const badgeText = p.informational ? "info" : p.severity;
+  const footLabel = p.informational ? "Reference (not an alert)" : "Best-practice ceiling";
   return `<div class="panel">
     <div class="panel-top">
       <div>
@@ -169,12 +178,12 @@ function panelHtml(p, systemLabel) {
         ${systemLabel ? `<div class="panel-system">${systemLabel}</div>` : ""}
         <div class="panel-value-row"><span class="panel-value">${fmt(p.value, p.unit === "%" || p.unit.includes("errors") || p.unit.includes("per port") ? 0 : 2)}</span><span class="panel-unit">${p.unit}</span></div>
       </div>
-      <span class="panel-badge ${badgeClass}">${p.severity}</span>
+      <span class="panel-badge ${badgeClass}">${badgeText}</span>
     </div>
-    <div class="panel-chart">${svgLine(p.series, { color, threshold: p.watch })}</div>
+    <div class="panel-chart">${svgLine(p.series, { color, threshold: p.informational ? null : p.watch })}</div>
     ${nodeBreakdownHtml(p)}
     <div class="panel-foot">
-      <span class="threshold-tag">Best-practice ceiling: <b>${p.threshold_label}</b></span>
+      <span class="threshold-tag">${footLabel}: <b>${p.threshold_label}</b></span>
       <span>${RANGES.find((r) => r.hours === state.hours)?.label || ""} window</span>
     </div>
   </div>`;

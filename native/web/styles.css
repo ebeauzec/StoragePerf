@@ -120,6 +120,7 @@ a{color:inherit;}
 .badge-critical{color:var(--critical); background:rgba(240,82,110,0.1);}
 .badge-watch{color:var(--warn); background:rgba(240,170,58,0.1);}
 .badge-good{color:var(--good); background:rgba(62,203,122,0.1);}
+.badge-info{color:var(--text-muted); background:rgba(140,150,165,0.1);}
 .panel-chart{margin-top:8px;}
 .panel-nodes{margin-top:8px; padding-top:8px; border-top:1px dashed var(--border-soft); display:flex; flex-direction:column; gap:4px;}
 .panel-nodes-label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.04em; color:var(--text-dim); margin-bottom:2px;}
