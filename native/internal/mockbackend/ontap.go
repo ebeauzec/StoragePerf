@@ -27,12 +27,19 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 	counters := newCounterAccumulator()
 
 	mux.HandleFunc("GET /api/cluster/metrics", func(w http.ResponseWriter, r *http.Request) {
-		// volume_avg_latency: display = latency.total(usec) / 1000.
-		// Thresholds (8ms/15ms) are in ms, so emit microseconds.
-		ms := arr.CurrentValue("volume_avg_latency", arr.ID+"|volume_avg_latency", "frontend", 8, 15, time.Now())
+		// volume_avg_latency / _read / _write: display = latency.{total,read,write}(usec) / 1000.
+		// Thresholds (8ms/15ms) are in ms, so emit microseconds. Read and
+		// write are independent wave functions (not a fixed split of
+		// total), same as every other read/write pair in mock mode, so
+		// they can genuinely diverge in the demo rather than always
+		// averaging back to exactly the total the combined panel shows.
+		now := time.Now()
+		totalMs := arr.CurrentValue("volume_avg_latency", arr.ID+"|volume_avg_latency", "frontend", 8, 15, now)
+		readMs := arr.CurrentValue("volume_avg_latency_read", arr.ID+"|volume_avg_latency_read", "frontend", 8, 15, now)
+		writeMs := arr.CurrentValue("volume_avg_latency_write", arr.ID+"|volume_avg_latency_write", "frontend", 8, 15, now)
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
-				{"latency": map[string]any{"total": ms * 1000}, "timestamp": time.Now().Format("2006-01-02 15:04:05 -0700")},
+				{"latency": map[string]any{"total": totalMs * 1000, "read": readMs * 1000, "write": writeMs * 1000}, "timestamp": now.Format("2006-01-02 15:04:05 -0700")},
 			},
 		})
 	})

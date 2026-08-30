@@ -60,6 +60,18 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 		case "sum(node_network_transmit_errs_total)":
 			perMin := arr.CurrentValue("network_errors", arr.ID+"|network_errors", "frontend", 0.01, 5, now)
 			value, ok = counters.accumulate(arr.ID+"|net_tx_errs", perMin/60.0/2), true
+		case "sum(storagegrid_s3_data_transfers_bytes_ingested)":
+			mbps := arr.CurrentValue("s3_bandwidth_ingested", arr.ID+"|s3_bandwidth_ingested", "frontend", 500, 1000, now)
+			value, ok = counters.accumulate(arr.ID+"|s3_ingested_bytes", mbps*1000000), true
+		case "sum(storagegrid_s3_data_transfers_bytes_retrieved)":
+			mbps := arr.CurrentValue("s3_bandwidth_retrieved", arr.ID+"|s3_bandwidth_retrieved", "frontend", 500, 1000, now)
+			value, ok = counters.accumulate(arr.ID+"|s3_retrieved_bytes", mbps*1000000), true
+		case `sum(storagegrid_private_s3_total_requests{type=~"get_.*"})`:
+			perMin := arr.CurrentValue("s3_ops_get", arr.ID+"|s3_ops_get", "frontend", 100000, 200000, now)
+			value, ok = counters.accumulate(arr.ID+"|s3_get_ops", perMin/60.0), true
+		case `sum(storagegrid_private_s3_total_requests{type=~"put_.*"})`:
+			perMin := arr.CurrentValue("s3_ops_put", arr.ID+"|s3_ops_put", "frontend", 100000, 200000, now)
+			value, ok = counters.accumulate(arr.ID+"|s3_put_ops", perMin/60.0), true
 
 		// Per-node breakdown queries (internal/netappnative/storagegrid.go's
 		// writeNodeBreakdowns) — raw/rated per-node values, no sum()/avg(),
@@ -80,6 +92,14 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 			result = nodeVector(arr, "network_errors", "frontend", 0.01, 5, now)
 		case "100 * (1 - (storagegrid_storage_utilization_usable_space_bytes / storagegrid_storage_utilization_total_space_bytes))":
 			result = nodeVector(arr, "storage_capacity", "backend", 80, 90, now)
+		case "rate(storagegrid_s3_data_transfers_bytes_ingested[5m])":
+			result = nodeVectorScaled(arr, "s3_bandwidth_ingested", "frontend", 500, 1000, 1000000, now)
+		case "rate(storagegrid_s3_data_transfers_bytes_retrieved[5m])":
+			result = nodeVectorScaled(arr, "s3_bandwidth_retrieved", "frontend", 500, 1000, 1000000, now)
+		case `rate(storagegrid_private_s3_total_requests{type=~"get_.*"}[5m]) * 60`:
+			result = nodeVector(arr, "s3_ops_get", "frontend", 100000, 200000, now)
+		case `rate(storagegrid_private_s3_total_requests{type=~"put_.*"}[5m]) * 60`:
+			result = nodeVector(arr, "s3_ops_put", "frontend", 100000, 200000, now)
 		}
 
 		if result == nil {
@@ -130,6 +150,17 @@ func culpritIndex(arr mockdata.Array, metricID string, n int) int {
 // degraded), and giving the per-node breakdown feature something
 // meaningful to show rather than N identical numbers.
 func nodeVector(arr mockdata.Array, metricID, category string, watch, critical float64, now time.Time) []map[string]any {
+	return nodeVectorScaled(arr, metricID, category, watch, critical, 1, now)
+}
+
+// nodeVectorScaled is nodeVector, multiplying every value by scale before
+// emitting it — for a metric whose severity bands (watch/critical) are
+// expressed in one unit (e.g. MB/s, matching the thresholds.yml panel)
+// but whose underlying mock PromQL query needs to answer in another (e.g.
+// raw bytes/sec, matching what a real grid's Prometheus would actually
+// return for that query before Plumb's own node_breakdown_query divides
+// it back down).
+func nodeVectorScaled(arr mockdata.Array, metricID, category string, watch, critical, scale float64, now time.Time) []map[string]any {
 	nodes := gridNodes(arr)
 	severity := arr.SeverityFor(metricID, category)
 	culprit := culpritIndex(arr, metricID, len(nodes))
@@ -140,7 +171,7 @@ func nodeVector(arr mockdata.Array, metricID, category string, watch, critical f
 		if severity != "healthy" && i == culprit {
 			nodeSeverity = severity
 		}
-		v := arr.ValueForSeverity(arr.ID+"|"+metricID+"|"+node, nodeSeverity, watch, critical, now)
+		v := arr.ValueForSeverity(arr.ID+"|"+metricID+"|"+node, nodeSeverity, watch, critical, now) * scale
 		result = append(result, map[string]any{
 			"metric": map[string]string{"instance": node},
 			"value":  []any{now.Unix(), fmt.Sprintf("%g", v)},

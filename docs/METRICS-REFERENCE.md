@@ -84,11 +84,27 @@ can speak for each vendor.
 
 | Metric ID | Prometheus metric | Category | What it measures | Interpretation |
 |---|---|---|---|---|
-| `host_latency` | `purefa_array_performance_latency_usec{dimension=~"read\|write"}` | Front-end | Average array-side latency across read and write operations, converted µs→ms | The headline "does this array feel slow" number. See [PERFORMANCE-ANALYSIS.md §2](PERFORMANCE-ANALYSIS.md#2-latency-is-the-number-that-matters-most--and-the-hardest-to-read) for what "array-side" does and doesn't include |
+| `host_latency` | `purefa_array_performance_latency_usec{dimension=~"^(usec_per_read_op\|usec_per_write_op)$"}` | Front-end | Average array-side latency across read and write operations, converted µs→ms | The headline "does this array feel slow" number. See [PERFORMANCE-ANALYSIS.md §2](PERFORMANCE-ANALYSIS.md#2-latency-is-the-number-that-matters-most--and-the-hardest-to-read) for what "array-side" does and doesn't include |
+| `host_latency_read` / `host_latency_write` | same metric, `dimension="usec_per_read_op"` / `"usec_per_write_op"` exactly | Front-end | Read-only / write-only latency | Catches what the averaged `host_latency` can hide: a write-only spike (background reclamation, replication competing for the write path) or read-only spike (cache misses) that stays under threshold once averaged with the clean direction |
+| `host_iops_read` / `host_iops_write` | `purefa_array_performance_throughput_iops{dimension="reads_per_sec"\|"writes_per_sec"}` | Front-end | Read/write operation rate | Workload characterization, not an alert on its own — higher isn't bad. Correlate against the latency-by-direction panels: rising IOPS with flat latency is healthy scaling, flat IOPS with rising latency points elsewhere |
+| `host_bandwidth_read` / `host_bandwidth_write` | `purefa_array_performance_bandwidth_bytes{dimension="read_bytes_per_sec"\|"write_bytes_per_sec"}` (→ MB/s) | Front-end | Read/write throughput in bytes | Same workload-characterization role as IOPS — a bandwidth change with steady IOPS suggests I/O size changed, not request rate |
 | `host_queue_depth` | `purefa_array_performance_queue_depth_ops` | Front-end | Outstanding host I/O, array-wide (not broken out per port) | A saturation signal — see [PERFORMANCE-ANALYSIS.md §4](PERFORMANCE-ANALYSIS.md#4-saturation-vs-utilization). Rising while latency is flat often means hosts are about to feel it next |
 | `network_errors` | `purefa_network_interface_performance_errors` (rate, summed across all interfaces) | Front-end | Interface-level errors, generic — no confirmed label distinguishing FC from Ethernet ports | If your `/metrics` output has an interface-identifying label (check for a `ct0.FC1`-style pattern), scope this query to it for per-port granularity — the shipped default sums the whole array |
 | `replication_lag` | `purefa_pod_replica_links_lag_average_msec` (ms→sec) | Back-end | Average replication lag across all replica links on the array | High values threaten your recovery point objective before they threaten performance — treat as a data-protection metric that happens to live in the "back-end" column |
 | `pool_saturation` | `purefa_array_space_utilization` | Back-end | Array-wide capacity utilization, already a percentage | Most storage systems' performance degrades as capacity fills — this is as much a leading performance indicator as a capacity one |
+
+**Read/write split, and a bug it fixed:** `purefa_array_performance_latency_usec`'s
+real `dimension` set is much richer than "read/write" — alongside the four
+end-to-end op dimensions (`usec_per_read_op`, `usec_per_write_op`,
+`usec_per_mirrored_write_op`, `usec_per_other_op`), it includes internal
+sub-component breakdowns (`queue_usec_per_read_op`, `san_usec_per_read_op`,
+`service_usec_per_read_op`, `qos_rate_limit_usec_per_read_op`, and their
+write equivalents). The query here used to be the unanchored regex
+`dimension=~"read|write"`, which — since `=~` matches a substring anywhere
+in the value — silently pulled in every one of those sub-component
+dimensions too, not just the two intended end-to-end ones. Fixed to an
+exact anchored alternation, and the same fix applied to the new
+`host_latency_read`/`host_latency_write` panels from the start.
 
 **What's deliberately not here:** controller busy%/CPU and internal media
 service-time have no published metric on Pure's native OpenMetrics endpoint
@@ -107,8 +123,11 @@ rollup) marked "TODO" by Pure Storage at the time this was checked
 
 | Metric ID | Prometheus metric | Category | What it measures | Interpretation |
 |---|---|---|---|---|
-| `bucket_latency` | `purefb_buckets_performance_latency_usec{dimension=~"read\|write"}` (µs→ms) | Front-end | Average latency across S3/object bucket operations | FlashBlade's workloads (object, file) behave differently from FlashArray's block workloads — expect different normal ranges, not the same thresholds |
-| `bucket_throughput` | `purefb_buckets_performance_throughput_iops{dimension=~"read\|write"}` | Back-end | Aggregate bucket-level operation rate | Shipped with an intentionally generic placeholder threshold — see the file's own header comment. Set this from your own observed baseline, not the default |
+| `bucket_latency` | `purefb_buckets_performance_latency_usec{dimension=~"^(usec_per_read_op\|usec_per_write_op)$"}` (µs→ms) | Front-end | Average latency across S3/object bucket operations | FlashBlade's workloads (object, file) behave differently from FlashArray's block workloads — expect different normal ranges, not the same thresholds |
+| `bucket_latency_read` / `bucket_latency_write` | same metric, exact `dimension` match per direction | Front-end | Read-only / write-only bucket latency | Same diagnostic value as FlashArray's split: a one-sided spike (ingest burst, a cold read pattern) that an average can hide |
+| `bucket_throughput` | `purefb_buckets_performance_throughput_iops{dimension=~"^(reads_per_sec\|writes_per_sec)$"}` | Back-end | Aggregate bucket-level operation rate | Shipped with an intentionally generic placeholder threshold — see the file's own header comment. Set this from your own observed baseline, not the default |
+| `bucket_throughput_read` / `bucket_throughput_write` | same metric, `dimension="reads_per_sec"` / `"writes_per_sec"` | Back-end | Read/write operation rate | Workload characterization — correlate against the latency-by-direction panels rather than treating a change as inherently bad |
+| `bucket_bandwidth_read` / `bucket_bandwidth_write` | `purefb_buckets_performance_bandwidth_bytes{dimension="read_bytes_per_sec"\|"write_bytes_per_sec"}` (→ MB/s) | Back-end | Read/write throughput in bytes | Genuinely new — FlashBlade had no bandwidth panel in Plumb before this. A bandwidth change with steady throughput (ops) suggests object size changed, not request rate |
 
 **This is the thinnest vendor file in Plumb, on purpose.** FlashBlade's own
 published metrics spec doesn't yet document an array-wide performance
@@ -136,6 +155,7 @@ the full source trail per metric)
 | Metric ID | Prometheus metric | Category | What it measures | Interpretation |
 |---|---|---|---|---|
 | `volume_avg_latency` | `volume_avg_latency` | Front-end | Cluster-wide average latency, in milliseconds directly (no unit conversion needed) | NetApp's own guidance is explicit that this is workload-dependent — see [PERFORMANCE-ANALYSIS.md §6](PERFORMANCE-ANALYSIS.md#6-why-plumbs-thresholds-are-illustrative-not-gospel) for their own published example |
+| `volume_avg_latency_read` / `volume_avg_latency_write` | `volume_avg_latency_read` / `_write` | Front-end | Read-only / write-only cluster-wide latency | ONTAP's REST performance objects (iops/latency/throughput) return read/write/other/total sub-fields — the documented "RWOT" convention, cluster-wide as of ONTAP 9.6. Lower confidence than the rest of this file: I confirmed this convention generally and for per-object endpoints, but couldn't get a live cluster's literal `/api/cluster/metrics` response to confirm the field names one-to-one for this specific endpoint. Best-effort — if your cluster doesn't populate these fields, the panel shows "unavailable" rather than a wrong number |
 | `nic_utilization` | `nic_util_percent` | Front-end | Maximum network port utilization percentage, any port | Computed as max(receive rate, transmit rate) ÷ link speed, from ONTAP's raw performance counter-tables API — the same formula and data source Harvest's own Nic plugin uses, reimplemented independently (see `ontap_countertables.go`'s doc comment) |
 | `nic_errors` | `nic_rx_crc_errors` (rate) | Front-end | Total receive+transmit errors per network port | Sourced from the port's general error counters (a simpler REST resource, not the counter-tables API), not the CRC-specific counter Harvest itself reads — a reasonable but less precise proxy for "this link has a problem" |
 | `node_cpu_busy` | `node_cpu_busy` | Back-end | Controller/node CPU busy percentage | Computed as a ratio of two counters' deltas between polls (NetApp's own documented single-sample formula is confirmed wrong — see the package doc comment) — this is the metric Pure's public endpoint doesn't have an equivalent for |
@@ -175,6 +195,8 @@ not third-party reverse-engineered
 | `node_cpu` | `storagegrid_node_cpu_utilization_percentage` | Back-end | Node CPU utilization | A real, direct utilization metric — StorageGRID matches ONTAP here, unlike Pure |
 | `ilm_backlog` | `storagegrid_ilm_awaiting_total_objects` | Back-end | Objects awaiting Information Lifecycle Management evaluation | **The one metric with no equivalent on any other platform Plumb supports.** ILM backlog is an object-storage-specific saturation signal — see [Section 2](#2-side-by-side-the-same-concept-four-vendors) — and tends to rise *before* client-facing latency does, making it a genuine early-warning metric unique to this vendor |
 | `storage_capacity` | computed: `100 * (1 - usable_space_bytes / total_space_bytes)` | Back-end | Storage capacity used, as a percentage | The only capacity metric in Plumb computed from a ratio of two raw byte-count metrics rather than read directly as a percentage |
+| `s3_bandwidth_ingested` / `s3_bandwidth_retrieved` | `storagegrid_s3_data_transfers_bytes_ingested` / `_retrieved` (rate → MB/s) | Front-end | S3 write-side / read-side throughput | Public, documented, stable metric names — StorageGRID had no bandwidth metric in Plumb at all before this. Ingested = data written to the grid (PUT-side); retrieved = data read from it (GET-side) |
+| `s3_ops_get` / `s3_ops_put` | `storagegrid_private_s3_total_requests{type=~"get_.*"}` / `{type=~"put_.*"}` (rate → ops/min) | Front-end | S3 GET-family / PUT-family operation rate | **Lower confidence than everything else in this file.** Sourced from a metric NetApp explicitly names with `_private_` and documents as "intended for internal use only... subject to change between StorageGRID releases without notice." This is the exact query behind NetApp's own bundled Grafana dashboard's "Top Nodes by GET/PUT Operations" panels, so it's real and working today — but if a future StorageGRID release renames or removes it, these two panels degrade to "unavailable" independently; nothing else in this file depends on them |
 
 **Per-node breakdown:** every metric above is collected two ways —
 grid-wide (the row in this table, via `avg()`/`sum()`) and per-node,

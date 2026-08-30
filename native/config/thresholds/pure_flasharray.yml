@@ -49,9 +49,22 @@ metrics:
     category: frontend
     label: "Host-Side Latency (avg)"
     unit: ms
-    # purefa_array_performance_latency_usec{dimension} is real and confirmed;
-    # dimension is one of read/write/mirrored_write/other.
-    query: 'avg(purefa_array_performance_latency_usec{array="{array}",dimension=~"read|write"}) / 1000'
+    # purefa_array_performance_latency_usec{dimension} is real and confirmed
+    # (specification/metrics/purefa-metrics.md in
+    # PureStorage-OpenConnect/pure-fa-openmetrics-exporter) — but its real
+    # dimension set is much richer than "read/write": alongside
+    # usec_per_read_op/usec_per_write_op/usec_per_mirrored_write_op/
+    # usec_per_other_op, it also includes internal sub-component
+    # breakdowns (queue_usec_per_read_op, san_usec_per_read_op,
+    # service_usec_per_read_op, qos_rate_limit_usec_per_read_op, and their
+    # write equivalents). The previous query here,
+    # dimension=~"read|write", was an UNANCHORED regex — =~ matches the
+    # substring anywhere in the value, so it silently pulled in every one
+    # of those sub-component dimensions too (they all contain "read" or
+    # "write"), not just the two intended end-to-end op dimensions. Fixed
+    # to an exact alternation so this is genuinely avg(read op latency,
+    # write op latency) and nothing else.
+    query: 'avg(purefa_array_performance_latency_usec{array="{array}",dimension=~"^(usec_per_read_op|usec_per_write_op)$"}) / 1000'
     comparison: gt
     severity_watch: 2.0
     severity_critical: 3.5
@@ -63,11 +76,139 @@ metrics:
       - "Check the array's front-end port statistics for retries, CRC errors, or link resets on the affected FC/iSCSI ports."
       - "Correlate the latency spike against host-side queue depth and multipath failover events in the same window."
       - "Confirm host HBA/NIC firmware and driver versions, and check for recent SAN fabric or switch changes."
-      - "Compare read vs. write latency dimensions separately — a one-sided spike often points to a specific workload or replication target, not the array generally."
+      - "Check the host_latency_read/host_latency_write panels below — a one-sided spike often points to a specific workload or replication target, not the array generally."
     remediate:
       - "If a specific host or LUN is disproportionately affected, review its queue depth and multipathing configuration first."
       - "If errors/retries are found on a specific port, engage the SAN team to inspect the cable/SFP or switch port."
       - "If latency is broad-based and back-end metrics are also degraded, escalate to Pure support with a support bundle covering this window."
+
+  - id: host_latency_read
+    category: frontend
+    label: "Host-Side Latency — Read"
+    unit: ms
+    query: 'avg(purefa_array_performance_latency_usec{array="{array}",dimension="usec_per_read_op"}) / 1000'
+    comparison: gt
+    severity_watch: 2.0
+    severity_critical: 3.5
+    threshold_label: "< 2.0 ms sustained"
+    finding:
+      watch: "Read latency is averaging {value:.1f}ms, above the {threshold:.1f}ms illustrative ceiling — and write latency is not necessarily also elevated (see the Write panel)."
+      critical: "Read latency is averaging {value:.1f}ms — check whether write latency is clean (host_latency_write) to tell a read-side problem (cache misses, a degraded read path) from a broad one."
+    investigate:
+      - "If write latency is clean but read latency isn't, suspect a read-cache miss pattern, a cold dataset, or a specific host's read-heavy workload rather than the array broadly."
+      - "Check host_iops_read alongside this — a read latency spike with flat read IOPS points to the array/path, not increased read load."
+      - "Compare against host_latency_write and host_latency (combined) to see whether this is isolated or part of a broader front-end issue."
+    remediate:
+      - "If isolated to specific hosts/volumes, review their read caching configuration and working-set size against available array cache."
+      - "If broad and correlated with back-end signals, treat as a general array/path issue — see the combined host_latency finding's remediation."
+
+  - id: host_latency_write
+    category: frontend
+    label: "Host-Side Latency — Write"
+    unit: ms
+    query: 'avg(purefa_array_performance_latency_usec{array="{array}",dimension="usec_per_write_op"}) / 1000'
+    comparison: gt
+    severity_watch: 2.0
+    severity_critical: 3.5
+    threshold_label: "< 2.0 ms sustained"
+    finding:
+      watch: "Write latency is averaging {value:.1f}ms, above the {threshold:.1f}ms illustrative ceiling — and read latency is not necessarily also elevated (see the Read panel)."
+      critical: "Write latency is averaging {value:.1f}ms — a common cause is background space-reclamation/garbage-collection or replication competing for the same write path, not client load."
+    investigate:
+      - "If read latency is clean but write latency isn't, check replication_lag and pool_saturation first — write-path contention often shows there before it shows here."
+      - "Check host_iops_write alongside this — a write latency spike with flat write IOPS points to the array/path, not increased write load."
+      - "Review recent snapshot schedules or space-reclamation activity, which competes for the same write path."
+    remediate:
+      - "If correlated with replication or capacity pressure, address that root cause directly rather than tuning the write path in isolation."
+      - "If isolated to specific hosts/volumes, review their write pattern (sync vs. async, block size) against the array's recommended profile."
+
+  - id: host_iops_read
+    category: frontend
+    label: "Host IOPS — Read"
+    unit: ops
+    # purefa_array_performance_throughput_iops{dimension} is real and
+    # confirmed (same spec as above). Unlike latency, higher IOPS isn't
+    # inherently bad — there's no universal "too much" ceiling — so this
+    # is workload characterization, same framing as FlashBlade's
+    # bucket_throughput: the value is for correlating against a latency
+    # panel (did latency rise because load rose, or didn't it?), not an
+    # alert to tune to on its own.
+    query: 'sum(purefa_array_performance_throughput_iops{array="{array}",dimension="reads_per_sec"})'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 200000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Read IOPS are averaging {value:.0f} — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Read IOPS are averaging {value:.0f} — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against host_latency_read — rising IOPS with flat latency is healthy scaling; flat IOPS with rising latency points elsewhere."
+      - "Check whether this coincides with a scheduled batch job, backup, or a new host coming online."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flasharray.yml with a value derived from this array's own observed normal range."
+      - "If workload-driven and expected, no remediation needed beyond confirming the array has headroom."
+
+  - id: host_iops_write
+    category: frontend
+    label: "Host IOPS — Write"
+    unit: ops
+    query: 'sum(purefa_array_performance_throughput_iops{array="{array}",dimension="writes_per_sec"})'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 200000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Write IOPS are averaging {value:.0f} — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Write IOPS are averaging {value:.0f} — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against host_latency_write — rising IOPS with flat latency is healthy scaling; flat IOPS with rising latency points elsewhere."
+      - "Check whether this coincides with a scheduled batch job, backup, snapshot, or replication resync."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flasharray.yml with a value derived from this array's own observed normal range."
+      - "If workload-driven and expected, no remediation needed beyond confirming the array has headroom."
+
+  - id: host_bandwidth_read
+    category: frontend
+    label: "Host Bandwidth — Read"
+    unit: "MB/s"
+    # purefa_array_performance_bandwidth_bytes{dimension} is real and
+    # confirmed (same spec). Converted bytes/sec -> MB/s for readability.
+    # Same workload-characterization framing as the IOPS panels above.
+    query: 'sum(purefa_array_performance_bandwidth_bytes{array="{array}",dimension="read_bytes_per_sec"}) / 1000000'
+    comparison: gt
+    severity_watch: 1000
+    severity_critical: 2000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Read bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Read bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against host_latency_read and host_iops_read — a bandwidth spike with steady IOPS suggests larger I/O sizes, not more operations."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flasharray.yml with a value derived from this array's own observed normal range."
+      - "If workload-driven and expected, no remediation needed beyond confirming the array has headroom."
+
+  - id: host_bandwidth_write
+    category: frontend
+    label: "Host Bandwidth — Write"
+    unit: "MB/s"
+    query: 'sum(purefa_array_performance_bandwidth_bytes{array="{array}",dimension="write_bytes_per_sec"}) / 1000000'
+    comparison: gt
+    severity_watch: 1000
+    severity_critical: 2000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Write bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Write bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against host_latency_write and host_iops_write — a bandwidth spike with steady IOPS suggests larger I/O sizes, not more operations."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flasharray.yml with a value derived from this array's own observed normal range."
+      - "If workload-driven and expected, no remediation needed beyond confirming the array has headroom."
 
   - id: host_queue_depth
     category: frontend

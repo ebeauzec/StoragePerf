@@ -286,6 +286,33 @@ func (c *StorageGridCollector) WriteMetrics(w io.Writer, arr config.Array) error
 	}{
 		{"storagegrid_s3_operations_failed", "Cumulative failed S3 operations",
 			"sum(storagegrid_s3_operations_failed)"},
+		// bytes_ingested (write-side)/bytes_retrieved (read-side) are
+		// public, documented, stable metric names
+		// (docs.netapp.com/us-en/storagegrid "Commonly used Prometheus
+		// metrics") — StorageGRID had no bandwidth metric in Plumb at all
+		// before this.
+		{"storagegrid_s3_data_transfers_bytes_ingested", "Cumulative bytes ingested from S3 clients (write-side)",
+			"sum(storagegrid_s3_data_transfers_bytes_ingested)"},
+		{"storagegrid_s3_data_transfers_bytes_retrieved", "Cumulative bytes retrieved by S3 clients (read-side)",
+			"sum(storagegrid_s3_data_transfers_bytes_retrieved)"},
+		// GET/PUT operation counts: sourced from storagegrid_private_s3_total_requests,
+		// filtered by its `type` label. This is the exact query behind
+		// NetApp's own bundled Grafana dashboard's "Top Nodes by GET/PUT
+		// Operations" panels (grafana/dashboards/storagegrid/s3.json in
+		// NetApp/harvest) — genuinely real and working today, but NetApp
+		// documents that any metric with "_private_" in its name is
+		// "intended for internal use only and are subject to change
+		// between StorageGRID releases without notice." Re-exposed here
+		// under Plumb's own stable name specifically so that risk is
+		// contained to this one query string: if a future StorageGRID
+		// release renames or removes the underlying private metric, this
+		// query just starts returning no data and the usual
+		// "unavailable" note fires below — nothing downstream needs to
+		// change or breaks.
+		{"storagegrid_s3_operations_get", "Cumulative S3 GET-family operations (sourced from a private metric — see comment)",
+			`sum(storagegrid_private_s3_total_requests{type=~"get_.*"})`},
+		{"storagegrid_s3_operations_put", "Cumulative S3 PUT-family operations (sourced from a private metric — see comment)",
+			`sum(storagegrid_private_s3_total_requests{type=~"put_.*"})`},
 	}
 	for _, cm := range counters {
 		v, ok, err := c.query(client, arr, cm.query)
@@ -354,6 +381,15 @@ func (c *StorageGridCollector) writeNodeBreakdowns(pw *promWriter, client *http.
 			"(rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m])) * 60"},
 		{"storagegrid_storage_capacity_by_node_pct", "Storage capacity used by node, percent",
 			"100 * (1 - (storagegrid_storage_utilization_usable_space_bytes / storagegrid_storage_utilization_total_space_bytes))"},
+		{"storagegrid_s3_bytes_ingested_by_node_per_sec", "S3 ingest (write) rate by node, bytes/sec",
+			"rate(storagegrid_s3_data_transfers_bytes_ingested[5m])"},
+		{"storagegrid_s3_bytes_retrieved_by_node_per_sec", "S3 retrieval (read) rate by node, bytes/sec",
+			"rate(storagegrid_s3_data_transfers_bytes_retrieved[5m])"},
+		// Same private-metric caveat as the grid-wide GET/PUT counters above.
+		{"storagegrid_s3_get_by_node_per_min", "S3 GET-family operations by node, per minute",
+			`rate(storagegrid_private_s3_total_requests{type=~"get_.*"}[5m]) * 60`},
+		{"storagegrid_s3_put_by_node_per_min", "S3 PUT-family operations by node, per minute",
+			`rate(storagegrid_private_s3_total_requests{type=~"put_.*"}[5m]) * 60`},
 	}
 	for _, bn := range byNode {
 		samples, err := c.queryVector(client, arr, bn.query)

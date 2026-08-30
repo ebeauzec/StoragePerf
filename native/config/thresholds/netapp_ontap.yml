@@ -38,13 +38,62 @@ metrics:
       watch: "Average volume latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance."
       critical: "Average volume latency is {value:.1f}ms — NetApp's own guidance treats sustained latency in this range as workload-impacting for most applications."
     investigate:
-      - "Identify which volume(s) are driving the average using Harvest's per-volume latency breakdown."
+      - "Identify which volume(s) are driving the average using the array's own per-volume latency breakdown."
       - "Check whether the affected volume(s) share an aggregate with a workload showing high disk or CPU busy (see the back-end panels)."
       - "Review QoS policy groups for the affected volumes — a throughput/IOPS ceiling can present as latency."
+      - "Check the volume_avg_latency_read/volume_avg_latency_write panels below — a one-sided spike often points to a specific workload, not the cluster generally."
     remediate:
       - "If a specific volume is responsible, review or adjust its QoS policy group limits."
       - "If the underlying aggregate's disks or the node's CPU are also elevated, address that back-end resource rather than the volume in isolation."
       - "Consider moving the volume to a less-contended aggregate or node if the imbalance persists."
+
+  - id: volume_avg_latency_read
+    category: frontend
+    label: "Volume Latency — Read"
+    unit: ms
+    # ONTAP's REST API performance objects (iops/latency/throughput) return
+    # read/write/other/total sub-fields — documented as the "RWOT"
+    # convention, available cluster-wide as of ONTAP 9.6
+    # (docs.netapp.com/us-en/ontap-automation/rest/performance_metrics.html).
+    # internal/netappnative/ontap.go's collectClusterLatency emits this
+    # best-effort: if a given ONTAP version's /api/cluster/metrics doesn't
+    # populate the read/write sub-fields, this panel simply shows
+    # "unavailable" rather than a wrong number — I could not get a live
+    # cluster's literal response to confirm the field names against this
+    # exact endpoint (vs. the per-object ones, which are well-documented).
+    query: 'avg(volume_avg_latency_read{array="{array}"})'
+    comparison: gt
+    severity_watch: 8
+    severity_critical: 15
+    threshold_label: "< 8 ms (illustrative — workload dependent)"
+    finding:
+      watch: "Average read latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance — check volume_avg_latency_write to see whether this is read-isolated."
+      critical: "Average read latency is {value:.1f}ms — a read-isolated spike often points to cache misses or a specific workload, not the cluster broadly."
+    investigate:
+      - "If write latency is clean but read latency isn't, check for a cold working set or a change in read pattern for the affected volume(s)."
+      - "Correlate against aggr_disk_busy — a read latency spike with high disk busy points to the media/aggregate, not the network path."
+    remediate:
+      - "If isolated to specific volumes, review their read-cache sizing and working-set fit before treating this as a cluster-wide issue."
+      - "If broad and correlated with back-end signals, treat as a general cluster issue — see the combined volume_avg_latency finding's remediation."
+
+  - id: volume_avg_latency_write
+    category: frontend
+    label: "Volume Latency — Write"
+    unit: ms
+    query: 'avg(volume_avg_latency_write{array="{array}"})'
+    comparison: gt
+    severity_watch: 8
+    severity_critical: 15
+    threshold_label: "< 8 ms (illustrative — workload dependent)"
+    finding:
+      watch: "Average write latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance — check volume_avg_latency_read to see whether this is write-isolated."
+      critical: "Average write latency is {value:.1f}ms — a write-isolated spike often points to snapshot/dedup/replication activity competing for the write path, not the cluster broadly."
+    investigate:
+      - "If read latency is clean but write latency isn't, check recent snapshot schedules, dedup/compression scans, or SnapMirror activity."
+      - "Correlate against node_cpu_busy and aggr_disk_busy — a write latency spike with both clean points to the network path, not the array."
+    remediate:
+      - "If correlated with background jobs, reschedule them to a lower-impact window rather than tuning the write path directly."
+      - "If broad and correlated with back-end signals, treat as a general cluster issue — see the combined volume_avg_latency finding's remediation."
 
   - id: nic_utilization
     category: frontend

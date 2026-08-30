@@ -127,10 +127,25 @@ func (c *ONTAPCollector) WriteMetrics(w io.Writer, arr config.Array) error {
 	return pw.Emit(w)
 }
 
+// ONTAP's REST API performance objects (this endpoint, and per-object ones
+// like /api/storage/volumes/{id}/metrics) consistently return latency/
+// iops/throughput broken into read/write/other/total sub-fields — this is
+// documented as the "RWOT" convention, available cluster-wide as of ONTAP
+// 9.6 (docs.netapp.com/us-en/ontap-automation/rest/performance_metrics.html).
+// Read/Write are a best-effort addition on top of the Total this collector
+// already used: if a given ONTAP version's /api/cluster/metrics doesn't
+// populate them (e.g. an older release, or this specific endpoint not
+// following the same convention as the per-object ones — I couldn't get a
+// live cluster's literal response to confirm the field names one-to-one
+// against this exact endpoint), they simply decode as zero and
+// collectClusterLatency below skips emitting them rather than publishing
+// a wrong number. Total is unaffected either way.
 type clusterMetricsResp struct {
 	Records []struct {
 		Latency struct {
-			Total float64 `json:"total"`
+			Total float64  `json:"total"`
+			Read  *float64 `json:"read"` // pointer: distinguishes "field absent" from a genuine 0.0 reading
+			Write *float64 `json:"write"`
 		} `json:"latency"`
 		Timestamp string `json:"timestamp"`
 	} `json:"records"`
@@ -149,8 +164,19 @@ func (c *ONTAPCollector) collectClusterLatency(pw *promWriter, client *http.Clie
 	}
 	// ONTAP reports latency in microseconds; config/thresholds/netapp_ontap.yml's
 	// severity_watch/critical (8/15) are in milliseconds, matching Harvest's convention.
-	ms := r.Records[len(r.Records)-1].Latency.Total / 1000.0
-	pw.gauge("volume_avg_latency", "Cluster-wide average latency in milliseconds", arr.ID, ms)
+	latest := r.Records[len(r.Records)-1].Latency
+	pw.gauge("volume_avg_latency", "Cluster-wide average latency in milliseconds", arr.ID, latest.Total/1000.0)
+
+	if latest.Read != nil {
+		pw.gauge("volume_avg_latency_read", "Cluster-wide average read latency in milliseconds", arr.ID, *latest.Read/1000.0)
+	} else {
+		pw.note("volume_avg_latency_read", "volume_avg_latency_read unavailable for %s: read latency not populated by /api/cluster/metrics on this ONTAP version", arr.ID)
+	}
+	if latest.Write != nil {
+		pw.gauge("volume_avg_latency_write", "Cluster-wide average write latency in milliseconds", arr.ID, *latest.Write/1000.0)
+	} else {
+		pw.note("volume_avg_latency_write", "volume_avg_latency_write unavailable for %s: write latency not populated by /api/cluster/metrics on this ONTAP version", arr.ID)
+	}
 }
 
 type nodesResp struct {

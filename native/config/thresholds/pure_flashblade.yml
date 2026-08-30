@@ -24,7 +24,13 @@ metrics:
     category: frontend
     label: "Bucket Latency (avg, read/write)"
     unit: ms
-    query: 'avg(purefb_buckets_performance_latency_usec{array="{array}",dimension=~"read|write"}) / 1000'
+    # dimension is confirmed exactly {usec_per_other_op, usec_per_read_op,
+    # usec_per_write_op} — unlike FlashArray's much richer dimension set,
+    # =~"read|write" happens to match exactly the two intended values here
+    # with no substring collision risk. Anchored anyway for consistency
+    # with pure_flasharray.yml and to stay correct if Pure ever adds a
+    # richer breakdown to this metric too.
+    query: 'avg(purefb_buckets_performance_latency_usec{array="{array}",dimension=~"^(usec_per_read_op|usec_per_write_op)$"}) / 1000'
     comparison: gt
     severity_watch: 5
     severity_critical: 15
@@ -36,16 +42,55 @@ metrics:
       - "Identify which bucket(s)/client(s) are driving the latency using per-bucket performance data."
       - "Check for a change in object-size profile or request pattern (e.g. many small objects vs. large sequential) around the time latency increased."
       - "Confirm client-side network path health (errors, retransmits) between the affected clients and the blade."
+      - "Check the bucket_latency_read/bucket_latency_write panels below — a one-sided spike often points to a specific access pattern, not the blade generally."
     remediate:
       - "If a specific bucket/workload is responsible, consider isolating it (dedicated bucket policy, or a separate FlashBlade if usage grows) rather than tuning the whole array."
       - "Engage the network team if client-side network errors correlate with the latency."
       - "If latency is broad and sustained, capture a support bundle and engage Pure support."
 
+  - id: bucket_latency_read
+    category: frontend
+    label: "Bucket Latency — Read"
+    unit: ms
+    query: 'avg(purefb_buckets_performance_latency_usec{array="{array}",dimension="usec_per_read_op"}) / 1000'
+    comparison: gt
+    severity_watch: 5
+    severity_critical: 15
+    threshold_label: "< 5 ms (illustrative)"
+    finding:
+      watch: "Read latency is averaging {value:.1f}ms, above the {threshold:.0f}ms illustrative ceiling — check bucket_latency_write to see whether this is read-isolated."
+      critical: "Read latency is averaging {value:.1f}ms — a read-isolated spike often points to object-size/access-pattern changes rather than the blade broadly."
+    investigate:
+      - "If write latency is clean but read latency isn't, check for a change in read pattern (many small GETs vs. large sequential reads) or a newly cold dataset."
+      - "Correlate against bucket_throughput_read — a latency spike with flat read throughput points to the blade/path, not increased read load."
+    remediate:
+      - "If isolated to specific buckets/clients, investigate their access pattern directly rather than tuning the whole blade."
+      - "If broad and sustained, capture a support bundle and engage Pure support."
+
+  - id: bucket_latency_write
+    category: frontend
+    label: "Bucket Latency — Write"
+    unit: ms
+    query: 'avg(purefb_buckets_performance_latency_usec{array="{array}",dimension="usec_per_write_op"}) / 1000'
+    comparison: gt
+    severity_watch: 5
+    severity_critical: 15
+    threshold_label: "< 5 ms (illustrative)"
+    finding:
+      watch: "Write latency is averaging {value:.1f}ms, above the {threshold:.0f}ms illustrative ceiling — check bucket_latency_read to see whether this is write-isolated."
+      critical: "Write latency is averaging {value:.1f}ms — a write-isolated spike often points to ingest load or background space management, not the blade broadly."
+    investigate:
+      - "If read latency is clean but write latency isn't, check for an ingest burst or background space-reclamation activity."
+      - "Correlate against bucket_throughput_write — a latency spike with flat write throughput points to the blade/path, not increased write load."
+    remediate:
+      - "If isolated to specific buckets/clients, investigate their ingest pattern directly rather than tuning the whole blade."
+      - "If broad and sustained, capture a support bundle and engage Pure support."
+
   - id: bucket_throughput
     category: backend
     label: "Bucket Throughput"
     unit: ops
-    query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension=~"read|write"})'
+    query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension=~"^(reads_per_sec|writes_per_sec)$"})'
     comparison: gt
     severity_watch: 100000
     severity_critical: 200000
@@ -61,3 +106,79 @@ metrics:
       - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
       - "If throughput is workload-driven and expected, no remediation is needed beyond confirming the array has headroom for it."
       - "If unplanned, identify and, if necessary, throttle or reschedule the responsible workload."
+
+  - id: bucket_throughput_read
+    category: backend
+    label: "Bucket Throughput — Read"
+    unit: ops
+    query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension="reads_per_sec"})'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 200000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Read throughput is averaging {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Read throughput is averaging {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against bucket_latency_read — rising throughput with flat latency is healthy scaling; flat throughput with rising latency points elsewhere."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
+
+  - id: bucket_throughput_write
+    category: backend
+    label: "Bucket Throughput — Write"
+    unit: ops
+    query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension="writes_per_sec"})'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 200000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Write throughput is averaging {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Write throughput is averaging {value:.0f} ops — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against bucket_latency_write — rising throughput with flat latency is healthy scaling; flat throughput with rising latency points elsewhere."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
+
+  - id: bucket_bandwidth_read
+    category: backend
+    label: "Bucket Bandwidth — Read"
+    unit: "MB/s"
+    # purefb_buckets_performance_bandwidth_bytes{dimension} is real and
+    # confirmed (same spec as latency/throughput above) but wasn't used
+    # anywhere in this file before — FlashBlade had no bandwidth panel at
+    # all until now.
+    query: 'sum(purefb_buckets_performance_bandwidth_bytes{array="{array}",dimension="read_bytes_per_sec"}) / 1000000'
+    comparison: gt
+    severity_watch: 1000
+    severity_critical: 2000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Read bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Read bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against bucket_latency_read and bucket_throughput_read — a bandwidth spike with steady throughput suggests larger object sizes, not more requests."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
+
+  - id: bucket_bandwidth_write
+    category: backend
+    label: "Bucket Bandwidth — Write"
+    unit: "MB/s"
+    query: 'sum(purefb_buckets_performance_bandwidth_bytes{array="{array}",dimension="write_bytes_per_sec"}) / 1000000'
+    comparison: gt
+    severity_watch: 1000
+    severity_critical: 2000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "Write bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+      critical: "Write bandwidth is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your array's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this array's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against bucket_latency_write and bucket_throughput_write — a bandwidth spike with steady throughput suggests larger object sizes, not more requests."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."

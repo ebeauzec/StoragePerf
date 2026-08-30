@@ -90,12 +90,39 @@ func writeFlashArrayMetrics(w http.ResponseWriter, arr mockdata.Array, counters 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	now := time.Now()
 
-	// host_latency: avg(...{dimension=~"read|write"}) / 1000 — thresholds
-	// (watch 2.0ms/critical 3.5ms) are in ms, so emit microseconds (×1000).
+	// host_latency / host_latency_read / host_latency_write: dimension
+	// values here must be Pure's REAL ones (usec_per_read_op,
+	// usec_per_write_op — see specification/metrics/purefa-metrics.md in
+	// PureStorage-OpenConnect/pure-fa-openmetrics-exporter), not the
+	// placeholder "read"/"write" this used before. That placeholder only
+	// ever worked by accident: the old thresholds.yml query,
+	// dimension=~"read|write", was an unanchored regex that matched the
+	// literal strings "read"/"write" as a trivial special case. Now that
+	// the query is anchored to the exact real dimension names, this must
+	// emit them for real too, thresholds (watch 2.0ms/critical 3.5ms) are
+	// in ms, so emit microseconds (×1000).
 	readMs := arr.CurrentValue("host_latency", arr.ID+"|host_latency|read", "frontend", 2.0, 3.5, now)
 	writeMs := arr.CurrentValue("host_latency", arr.ID+"|host_latency|write", "frontend", 2.0, 3.5, now)
-	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="read"}`, readMs*1000)
-	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="write"}`, writeMs*1000)
+	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="usec_per_read_op"}`, readMs*1000)
+	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="usec_per_write_op"}`, writeMs*1000)
+
+	// host_iops_read / host_iops_write: purefa_array_performance_throughput_iops,
+	// dimension reads_per_sec/writes_per_sec — genuinely new metric, not
+	// previously emitted at all. Independent wave functions from latency
+	// (real IOPS and real latency don't move in lockstep), same
+	// illustrative-baseline framing as the thresholds file.
+	readIOPS := arr.CurrentValue("host_iops_read", arr.ID+"|host_iops_read", "frontend", 100000, 200000, now)
+	writeIOPS := arr.CurrentValue("host_iops_write", arr.ID+"|host_iops_write", "frontend", 100000, 200000, now)
+	fprintGauge(w, "purefa_array_performance_throughput_iops", "FlashArray array throughput in operations per second", `{dimension="reads_per_sec"}`, readIOPS)
+	fprintGauge(w, "purefa_array_performance_throughput_iops", "FlashArray array throughput in operations per second", `{dimension="writes_per_sec"}`, writeIOPS)
+
+	// host_bandwidth_read / host_bandwidth_write: purefa_array_performance_bandwidth_bytes,
+	// dimension read_bytes_per_sec/write_bytes_per_sec — thresholds are in
+	// MB/s, so emit bytes/sec (×1,000,000).
+	readMBs := arr.CurrentValue("host_bandwidth_read", arr.ID+"|host_bandwidth_read", "frontend", 1000, 2000, now)
+	writeMBs := arr.CurrentValue("host_bandwidth_write", arr.ID+"|host_bandwidth_write", "frontend", 1000, 2000, now)
+	fprintGauge(w, "purefa_array_performance_bandwidth_bytes", "FlashArray array bandwidth in bytes per second", `{dimension="read_bytes_per_sec"}`, readMBs*1000000)
+	fprintGauge(w, "purefa_array_performance_bandwidth_bytes", "FlashArray array bandwidth in bytes per second", `{dimension="write_bytes_per_sec"}`, writeMBs*1000000)
 
 	// host_queue_depth: avg(...), no conversion, thresholds already in ops.
 	queue := arr.CurrentValue("host_queue_depth", arr.ID+"|host_queue_depth", "frontend", 350, 450, now)
@@ -128,17 +155,31 @@ func writeFlashBladeMetrics(w http.ResponseWriter, arr mockdata.Array) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	now := time.Now()
 
-	// bucket_latency: avg(...{dimension=~"read|write"}) / 1000, thresholds
-	// (watch 5ms/critical 15ms) in ms -> emit microseconds.
+	// bucket_latency / bucket_latency_read / bucket_latency_write: real
+	// dimension values (usec_per_read_op/usec_per_write_op — see
+	// specification/metrics/purefb-metrics.md), not the old placeholder
+	// "read"/"write" strings, same correction as pure.go's FlashArray
+	// path and for the same reason (the old unanchored regex tolerated
+	// the placeholder; the corrected one doesn't). Thresholds (watch
+	// 5ms/critical 15ms) in ms -> emit microseconds.
 	readMs := arr.CurrentValue("bucket_latency", arr.ID+"|bucket_latency|read", "frontend", 5, 15, now)
 	writeMs := arr.CurrentValue("bucket_latency", arr.ID+"|bucket_latency|write", "frontend", 5, 15, now)
-	fprintGauge(w, "purefb_buckets_performance_latency_usec", "FlashBlade buckets latency in microseconds", `{name="media-archive",dimension="read"}`, readMs*1000)
-	fprintGauge(w, "purefb_buckets_performance_latency_usec", "FlashBlade buckets latency in microseconds", `{name="media-archive",dimension="write"}`, writeMs*1000)
+	fprintGauge(w, "purefb_buckets_performance_latency_usec", "FlashBlade buckets latency in microseconds", `{name="media-archive",dimension="usec_per_read_op"}`, readMs*1000)
+	fprintGauge(w, "purefb_buckets_performance_latency_usec", "FlashBlade buckets latency in microseconds", `{name="media-archive",dimension="usec_per_write_op"}`, writeMs*1000)
 
-	// bucket_throughput: sum(...{dimension=~"read|write"}), illustrative
-	// placeholder threshold — split across the two dimensions Pure
-	// publishes, read-heavy to match a typical media-archive workload.
-	total := arr.CurrentValue("bucket_throughput", arr.ID+"|bucket_throughput", "backend", 100000, 200000, now)
-	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="read"}`, total*0.6)
-	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="write"}`, total*0.4)
+	// bucket_throughput / bucket_throughput_read / bucket_throughput_write:
+	// real dimension values (reads_per_sec/writes_per_sec), independent
+	// wave functions per direction rather than one total split by a fixed
+	// ratio, so read and write can genuinely diverge in the demo.
+	readIOPS := arr.CurrentValue("bucket_throughput_read", arr.ID+"|bucket_throughput_read", "backend", 100000, 200000, now)
+	writeIOPS := arr.CurrentValue("bucket_throughput_write", arr.ID+"|bucket_throughput_write", "backend", 100000, 200000, now)
+	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="reads_per_sec"}`, readIOPS)
+	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="writes_per_sec"}`, writeIOPS)
+
+	// bucket_bandwidth_read / bucket_bandwidth_write: genuinely new metric,
+	// not previously emitted. Thresholds in MB/s -> emit bytes/sec.
+	readMBs := arr.CurrentValue("bucket_bandwidth_read", arr.ID+"|bucket_bandwidth_read", "backend", 1000, 2000, now)
+	writeMBs := arr.CurrentValue("bucket_bandwidth_write", arr.ID+"|bucket_bandwidth_write", "backend", 1000, 2000, now)
+	fprintGauge(w, "purefb_buckets_performance_bandwidth_bytes", "FlashBlade buckets bandwidth in bytes per second", `{name="media-archive",dimension="read_bytes_per_sec"}`, readMBs*1000000)
+	fprintGauge(w, "purefb_buckets_performance_bandwidth_bytes", "FlashBlade buckets bandwidth in bytes per second", `{name="media-archive",dimension="write_bytes_per_sec"}`, writeMBs*1000000)
 }

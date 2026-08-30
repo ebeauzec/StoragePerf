@@ -1,12 +1,11 @@
 # Plumb — NetApp StorageGRID best-practice thresholds
 #
-# Collected via NetApp Harvest's StorageGrid collector — same mechanism as
-# the ONTAP path (an authenticated Harvest poller exposing a plain local
-# Prometheus endpoint), pointed at the Grid Management API instead of an
-# ONTAP cluster. StorageGRID also runs its own internal Prometheus on its
-# Admin Nodes if you'd rather federate from that directly instead of Harvest
-# — either way the metric names below are the same, since they come from
-# StorageGRID itself.
+# Collected via Plumb's own in-process collector
+# (internal/netappnative/storagegrid.go), which logs into the Grid
+# Management API and runs PromQL directly against the grid's own embedded
+# Prometheus — no separate poller process, works on every platform. The
+# metric names below are exactly what that Prometheus itself publishes,
+# unchanged by Plumb.
 #
 # Metric names are verified against NetApp's own published documentation
 # ("Commonly used Prometheus metrics", docs.netapp.com/us-en/storagegrid)
@@ -172,3 +171,101 @@ metrics:
       - "Expand storage capacity (additional nodes/volumes) if growth is sustained and expected to continue."
       - "Review and correct ILM policy if objects aren't reaching their intended, more space-efficient placement tier."
       - "Engage the responsible tenant if a single tenant's growth is disproportionate."
+
+  - id: s3_bandwidth_ingested
+    category: frontend
+    label: "S3 Bandwidth — Ingested (write)"
+    unit: "MB/s"
+    # storagegrid_s3_data_transfers_bytes_ingested is public, documented,
+    # and stable (docs.netapp.com/us-en/storagegrid "Commonly used
+    # Prometheus metrics") — StorageGRID had no bandwidth metric in Plumb
+    # at all before this. Like Pure's IOPS/bandwidth panels, higher isn't
+    # inherently bad — this is workload characterization for correlating
+    # against latency/error-rate panels, not an alert to tune on its own.
+    query: 'rate(storagegrid_s3_data_transfers_bytes_ingested{array="{array}"}[5m]) / 1000000'
+    node_breakdown_query: 'storagegrid_s3_bytes_ingested_by_node_per_sec{array="{array}"} / 1000000'
+    comparison: gt
+    severity_watch: 500
+    severity_critical: 1000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "S3 ingest rate is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your grid's own observed normal range."
+      critical: "S3 ingest rate is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your grid's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this grid's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against metadata_query_latency and node_cpu — a bandwidth spike with rising latency suggests the grid is genuinely under ingest pressure, not just busy."
+      - "Use this panel's per-node breakdown to see whether ingest is concentrated on one node rather than balanced across the grid."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/netapp_storagegrid.yml with a value derived from this grid's own observed normal range."
+      - "If ingest is unbalanced across nodes, review load-balancer endpoint configuration."
+
+  - id: s3_bandwidth_retrieved
+    category: frontend
+    label: "S3 Bandwidth — Retrieved (read)"
+    unit: "MB/s"
+    query: 'rate(storagegrid_s3_data_transfers_bytes_retrieved{array="{array}"}[5m]) / 1000000'
+    node_breakdown_query: 'storagegrid_s3_bytes_retrieved_by_node_per_sec{array="{array}"} / 1000000'
+    comparison: gt
+    severity_watch: 500
+    severity_critical: 1000
+    threshold_label: "illustrative only — set from your own baseline"
+    finding:
+      watch: "S3 retrieval rate is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your grid's own observed normal range."
+      critical: "S3 retrieval rate is averaging {value:.0f} MB/s — this threshold is a placeholder; replace it with your grid's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this grid's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against metadata_query_latency — a retrieval spike with rising latency suggests genuine read pressure, not just a busy grid."
+      - "Use this panel's per-node breakdown to see whether retrieval is concentrated on one node rather than balanced across the grid."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/netapp_storagegrid.yml with a value derived from this grid's own observed normal range."
+      - "If retrieval is unbalanced across nodes, review load-balancer endpoint configuration."
+
+  - id: s3_ops_get
+    category: frontend
+    label: "S3 Operations — GET"
+    unit: "ops/min"
+    # Sourced from storagegrid_private_s3_total_requests{type=~"get_.*"} —
+    # the exact query behind NetApp's own bundled Grafana dashboard's "Top
+    # Nodes by GET Operations" panel (grafana/dashboards/storagegrid/s3.json
+    # in NetApp/harvest). Genuinely real and working today, but NetApp
+    # documents that any metric with "_private_" in its name can change or
+    # disappear without notice between StorageGRID releases — if that
+    # happens, this panel just stops reporting (the collector's own
+    # "unavailable" note fires) rather than anything breaking. Treat this
+    # one specifically as lower-confidence than the rest of this file.
+    query: 'rate(storagegrid_s3_operations_get{array="{array}"}[5m]) * 60'
+    node_breakdown_query: 'storagegrid_s3_get_by_node_per_min{array="{array}"}'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 200000
+    threshold_label: "illustrative only — set from your own baseline (sourced from a private metric — see comment)"
+    finding:
+      watch: "S3 GET rate is averaging {value:.0f}/min — this threshold is a placeholder; replace it with your grid's own observed normal range."
+      critical: "S3 GET rate is averaging {value:.0f}/min — this threshold is a placeholder; replace it with your grid's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this grid's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against s3_bandwidth_retrieved and metadata_query_latency — rising GETs with flat latency is healthy scaling; flat GETs with rising latency points elsewhere."
+      - "If this panel shows unavailable, StorageGRID's private per-operation-type metric may have changed between releases — the grid-wide s3_error_rate/s3_bandwidth panels are unaffected."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/netapp_storagegrid.yml with a value derived from this grid's own observed normal range."
+
+  - id: s3_ops_put
+    category: frontend
+    label: "S3 Operations — PUT"
+    unit: "ops/min"
+    # Same private-metric sourcing and caveat as s3_ops_get above.
+    query: 'rate(storagegrid_s3_operations_put{array="{array}"}[5m]) * 60'
+    node_breakdown_query: 'storagegrid_s3_put_by_node_per_min{array="{array}"}'
+    comparison: gt
+    severity_watch: 100000
+    severity_critical: 200000
+    threshold_label: "illustrative only — set from your own baseline (sourced from a private metric — see comment)"
+    finding:
+      watch: "S3 PUT rate is averaging {value:.0f}/min — this threshold is a placeholder; replace it with your grid's own observed normal range."
+      critical: "S3 PUT rate is averaging {value:.0f}/min — this threshold is a placeholder; replace it with your grid's own observed normal range."
+    investigate:
+      - "First confirm whether this is actually unusual relative to this grid's own historical baseline (use the 7D/30D view), since this threshold is a placeholder."
+      - "Correlate against s3_bandwidth_ingested and metadata_query_latency — rising PUTs with flat latency is healthy scaling; flat PUTs with rising latency points elsewhere."
+      - "If this panel shows unavailable, StorageGRID's private per-operation-type metric may have changed between releases — the grid-wide s3_error_rate/s3_bandwidth panels are unaffected."
+    remediate:
+      - "Replace the illustrative threshold in config/thresholds/netapp_storagegrid.yml with a value derived from this grid's own observed normal range."
