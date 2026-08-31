@@ -22,28 +22,58 @@ Set-Location $PSScriptRoot
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $Repo = "ebeauzec/StoragePerf"
-$Dest = "plumb-release"
 
-# This repo routinely lives in a cloud-synced folder (OneDrive/Google
-# Drive), and this script's own reinstall flow deletes $Dest then
-# immediately re-creates and re-checks paths inside it while also doing
-# heavy I/O nearby (extracting a ~70MB archive) -- exactly the kind of
-# contention that can make Google Drive's virtual filesystem briefly throw
-# UnauthorizedAccessException ("Access is denied") from Test-Path instead
-# of just returning $false, while its own sync/reconciliation reacts to
-# what this script just did. Confirmed by hitting it directly: deleting
-# plumb-release and immediately re-running this script threw that exact
-# exception from the very next Test-Path call -- and it wasn't consistently
-# reproducible on a fixed delay, consistent with contention rather than a
-# predictable settling time. Retry for a few seconds instead of letting one
-# blip abort the whole install; this isn't a 100% guarantee against an
-# inherently flaky virtual filesystem, but it rides out the common case.
+# The install itself lives outside the repo entirely, in the per-user
+# local profile -- NOT inside this cloud-synced folder (OneDrive/Google
+# Drive). It has to be: this script's own reinstall flow deletes the
+# install directory and immediately re-creates + rewrites a ~12MB
+# plumb.exe inside it, over and over across upgrades, and Google Drive's
+# virtual filesystem treats that pattern as sync-worthy churn on a large
+# binary -- it can hold the file locked mid-upload/verification for
+# anywhere from under a second to several minutes, surfacing as Test-Path
+# throwing UnauthorizedAccessException ("Access is denied") instead of
+# returning $false, or a plain write failing outright. This was hit for
+# real (not just in testing): reproducibly on this exact plumb-release
+# path, but never on a fresh path or a local (non-Drive) directory --
+# confirming it's Drive's file-locking behavior on repeated rewrites of
+# this specific large binary, not a bug in the check itself or a one-off
+# testing artifact. Retrying around it wasn't sufficient; not fighting a
+# cloud sync client for a lock is the actual fix. $env:LOCALAPPDATA is
+# never synced by Drive/OneDrive by convention, so this sidesteps the
+# whole failure class rather than mitigating it.
+$Dest = Join-Path $env:LOCALAPPDATA "Plumb"
+
+# One-time migration for anyone who already has a previous install sitting
+# in the old, repo-relative location (every release through v0.10.3
+# installed there) -- carry their real data and config forward instead of
+# silently starting over, then get out of the cloud-synced folder for good.
+$oldDest = Join-Path $PSScriptRoot "plumb-release"
+if ((Test-Path $oldDest) -and -not (Test-Path $Dest)) {
+    Write-Host "==> Moving existing install from .\plumb-release to $Dest (out of the synced folder)"
+    New-Item -ItemType Directory -Path $Dest -Force | Out-Null
+    $oldDataDir = Join-Path $oldDest "data"
+    if (Test-Path $oldDataDir) { Move-Item $oldDataDir (Join-Path $Dest "data") }
+    $oldCfgDir = Join-Path $oldDest "config"
+    if (Test-Path $oldCfgDir) {
+        New-Item -ItemType Directory -Path (Join-Path $Dest "config") -Force | Out-Null
+        foreach ($f in "arrays.yml", "settings.yml") {
+            $src = Join-Path $oldCfgDir $f
+            if (Test-Path $src) { Move-Item $src (Join-Path $Dest "config\$f") }
+        }
+    }
+    Remove-Item -Recurse -Force $oldDest -ErrorAction SilentlyContinue
+}
+
+# Defense in depth, not the primary fix (moving $Dest off the synced
+# folder above is): retry a transient Test-Path failure instead of
+# aborting on the first one, in case $env:LOCALAPPDATA is itself
+# redirected onto a network/synced location in some environment.
 function Test-PathResilient {
     param([string]$Path)
-    for ($i = 0; $i -lt 12; $i++) {
+    for ($i = 0; $i -lt 5; $i++) {
         try { return Test-Path $Path } catch {
-            if ($i -eq 11) { throw }
-            Start-Sleep -Milliseconds 700
+            if ($i -eq 4) { throw }
+            Start-Sleep -Milliseconds 500
         }
     }
 }
@@ -63,13 +93,10 @@ if (-not $asset) {
     throw "Couldn't find a windows_amd64 release asset. Download manually from https://github.com/$Repo/releases/latest"
 }
 
-# A plain "plumb-release" here may not even be a Windows install: this repo
-# commonly lives in a cloud-synced folder (OneDrive/Google Drive) shared
-# with a Mac/Linux machine, and run.sh installs into this same $Dest name
-# with a "plumb" binary (no .exe) instead of "plumb.exe". Requiring
-# plumb.exe specifically means a synced-over macOS/Linux install is
-# correctly treated as "not installed for this platform" and replaced,
-# rather than silently trying (and failing) to run someone else's binary.
+# Requiring plumb.exe specifically (not just the directory) means a
+# partial/corrupt previous install is treated as "not installed" and
+# replaced, rather than silently trying (and failing) to run something
+# that isn't there.
 $marker = Join-Path $Dest ".installed_version"
 $alreadyInstalled = $false
 if ((Test-PathResilient (Join-Path $Dest "plumb.exe")) -and (Test-PathResilient $marker)) {
@@ -78,7 +105,7 @@ if ((Test-PathResilient (Join-Path $Dest "plumb.exe")) -and (Test-PathResilient 
 }
 
 if ($alreadyInstalled) {
-    Write-Host "==> $tag already installed at .\$Dest -- starting"
+    Write-Host "==> $tag already installed at $Dest -- starting"
 } else {
     $zipPath = Join-Path $env:TEMP $asset.name
     Write-Host "==> Downloading $($asset.name) ($tag)"
@@ -88,8 +115,9 @@ if ($alreadyInstalled) {
     # collected metrics database and their real array inventory/settings.
     # An upgrade replaces the application code and bundled defaults -- it
     # must never throw away a live database or real credentials to do
-    # that.
-    $preserve = ".plumb-upgrade-preserve"
+    # that. Lives next to $Dest (also outside the synced repo folder), not
+    # under it -- same reasoning as $Dest itself.
+    $preserve = Join-Path $env:LOCALAPPDATA ".plumb-upgrade-preserve"
     if (Test-PathResilient $preserve) { Remove-Item -Recurse -Force $preserve }
     New-Item -ItemType Directory -Path $preserve | Out-Null
     $oldData = Join-Path $Dest "data"
@@ -102,7 +130,7 @@ if ($alreadyInstalled) {
         if (Test-PathResilient $oldSettings) { Move-Item $oldSettings (Join-Path $preserve "config\settings.yml") }
     }
 
-    Write-Host "==> Installing to .\$Dest"
+    Write-Host "==> Installing to $Dest"
     if (Test-PathResilient $Dest) { Remove-Item -Recurse -Force $Dest }
     $tempExtract = Join-Path $env:TEMP "plumb-extract-$tag"
     if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
@@ -120,9 +148,7 @@ if ($alreadyInstalled) {
     # preserved data/ directory gets moved back in below -- there's nothing
     # to unblock in a database this script already had on disk, and
     # recursively unblocking it on every single launch (not just a fresh
-    # install) was a real, needless cost, especially on a cloud-synced
-    # folder (OneDrive/Google Drive) where every file operation is far
-    # slower than on a local disk.
+    # install) was a real, needless cost.
     Get-ChildItem -Path $Dest -Recurse | Unblock-File
 
     if (Test-PathResilient (Join-Path $preserve "data")) {
