@@ -24,6 +24,30 @@ Set-Location $PSScriptRoot
 $Repo = "ebeauzec/StoragePerf"
 $Dest = "plumb-release"
 
+# This repo routinely lives in a cloud-synced folder (OneDrive/Google
+# Drive), and this script's own reinstall flow deletes $Dest then
+# immediately re-creates and re-checks paths inside it while also doing
+# heavy I/O nearby (extracting a ~70MB archive) -- exactly the kind of
+# contention that can make Google Drive's virtual filesystem briefly throw
+# UnauthorizedAccessException ("Access is denied") from Test-Path instead
+# of just returning $false, while its own sync/reconciliation reacts to
+# what this script just did. Confirmed by hitting it directly: deleting
+# plumb-release and immediately re-running this script threw that exact
+# exception from the very next Test-Path call -- and it wasn't consistently
+# reproducible on a fixed delay, consistent with contention rather than a
+# predictable settling time. Retry for a few seconds instead of letting one
+# blip abort the whole install; this isn't a 100% guarantee against an
+# inherently flaky virtual filesystem, but it rides out the common case.
+function Test-PathResilient {
+    param([string]$Path)
+    for ($i = 0; $i -lt 12; $i++) {
+        try { return Test-Path $Path } catch {
+            if ($i -eq 11) { throw }
+            Start-Sleep -Milliseconds 700
+        }
+    }
+}
+
 # This whole body is wrapped so a double-click via run.bat gets a readable
 # "==> ERROR: ..." line instead of a raw PowerShell exception, and so
 # run.bat can tell success from failure via the exit code and pause the
@@ -48,7 +72,7 @@ if (-not $asset) {
 # rather than silently trying (and failing) to run someone else's binary.
 $marker = Join-Path $Dest ".installed_version"
 $alreadyInstalled = $false
-if ((Test-Path (Join-Path $Dest "plumb.exe")) -and (Test-Path $marker)) {
+if ((Test-PathResilient (Join-Path $Dest "plumb.exe")) -and (Test-PathResilient $marker)) {
     $installed = (Get-Content $marker -Raw).Trim()
     $alreadyInstalled = $installed -eq $tag
 }
@@ -66,20 +90,20 @@ if ($alreadyInstalled) {
     # must never throw away a live database or real credentials to do
     # that.
     $preserve = ".plumb-upgrade-preserve"
-    if (Test-Path $preserve) { Remove-Item -Recurse -Force $preserve }
+    if (Test-PathResilient $preserve) { Remove-Item -Recurse -Force $preserve }
     New-Item -ItemType Directory -Path $preserve | Out-Null
     $oldData = Join-Path $Dest "data"
-    if (Test-Path $oldData) { Move-Item $oldData (Join-Path $preserve "data") }
+    if (Test-PathResilient $oldData) { Move-Item $oldData (Join-Path $preserve "data") }
     $oldArrays = Join-Path $Dest "config\arrays.yml"
     $oldSettings = Join-Path $Dest "config\settings.yml"
-    if ((Test-Path $oldArrays) -or (Test-Path $oldSettings)) {
+    if ((Test-PathResilient $oldArrays) -or (Test-PathResilient $oldSettings)) {
         New-Item -ItemType Directory -Path (Join-Path $preserve "config") | Out-Null
-        if (Test-Path $oldArrays) { Move-Item $oldArrays (Join-Path $preserve "config\arrays.yml") }
-        if (Test-Path $oldSettings) { Move-Item $oldSettings (Join-Path $preserve "config\settings.yml") }
+        if (Test-PathResilient $oldArrays) { Move-Item $oldArrays (Join-Path $preserve "config\arrays.yml") }
+        if (Test-PathResilient $oldSettings) { Move-Item $oldSettings (Join-Path $preserve "config\settings.yml") }
     }
 
     Write-Host "==> Installing to .\$Dest"
-    if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
+    if (Test-PathResilient $Dest) { Remove-Item -Recurse -Force $Dest }
     $tempExtract = Join-Path $env:TEMP "plumb-extract-$tag"
     if (Test-Path $tempExtract) { Remove-Item -Recurse -Force $tempExtract }
     Expand-Archive -Path $zipPath -DestinationPath $tempExtract
@@ -101,14 +125,14 @@ if ($alreadyInstalled) {
     # slower than on a local disk.
     Get-ChildItem -Path $Dest -Recurse | Unblock-File
 
-    if (Test-Path (Join-Path $preserve "data")) {
+    if (Test-PathResilient (Join-Path $preserve "data")) {
         Write-Host "==> Restoring existing metrics database"
         Move-Item (Join-Path $preserve "data") (Join-Path $Dest "data")
     }
     $newArrays = Join-Path $preserve "config\arrays.yml"
     $newSettings = Join-Path $preserve "config\settings.yml"
-    if (Test-Path $newArrays) { Move-Item $newArrays $oldArrays }
-    if (Test-Path $newSettings) { Move-Item $newSettings $oldSettings }
+    if (Test-PathResilient $newArrays) { Move-Item $newArrays $oldArrays }
+    if (Test-PathResilient $newSettings) { Move-Item $newSettings $oldSettings }
     Remove-Item -Recurse -Force $preserve
 
     Set-Content -Path $marker -Value $tag
