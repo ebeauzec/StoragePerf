@@ -119,9 +119,19 @@ EOF
         # macOS/Linux) -- fall back to PowerShell's own Compress-Archive,
         # which is present on every Windows install with no extra tool to
         # source.
+        #
+        # -Path must point at the directory itself, NOT "dir\*": run.ps1's
+        # extraction picks Get-ChildItem $tempExtract | Select -First 1 and
+        # moves that one item to become $Dest, exactly matching zip -qr's
+        # behavior of wrapping everything in one top-level folder. Pointing
+        # at "dir\*" instead zips the *contents* at the archive root with no
+        # wrapping folder, so that Get-ChildItem call grabs one arbitrary
+        # file (alphabetically first) instead of the whole release --
+        # silently shipping a zip that installs as a handful of stray files
+        # with plumb.exe and everything else left behind unextracted.
         win_src=$(cd "plumb-${VERSION}-${platform}" && pwd -W)
         win_dest="$(pwd -W)/plumb-${VERSION}-${platform}.zip"
-        powershell.exe -NoProfile -Command "Compress-Archive -Path '${win_src}\\*' -DestinationPath '${win_dest}' -Force"
+        powershell.exe -NoProfile -Command "Compress-Archive -Path '${win_src}' -DestinationPath '${win_dest}' -Force"
       fi
     else
       tar -czf "plumb-${VERSION}-${platform}.tar.gz" "plumb-${VERSION}-${platform}"
