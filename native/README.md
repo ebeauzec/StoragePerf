@@ -104,6 +104,35 @@ directly; it only ever talks to VictoriaMetrics over its HTTP API), and
 `arrays.yml`/`settings.yml` are plain YAML Plumb already knows how to
 read regardless of which release wrote them.
 
+## Windows, and running from a cloud-synced folder
+
+`run.bat` at the repo root is Windows' real entry point — `run.ps1` alone
+has no double-click "run" action, and PowerShell's default execution
+policy blocks running an unsigned script directly. `run.bat` just invokes
+`powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1`, scoped to
+that one process only.
+
+**Avoid running the installed copy from inside a folder synced by Google
+Drive, OneDrive, or Dropbox.** `run.ps1`'s upgrade flow deletes and
+rewrites the ~12MB `plumb.exe` on every run; doing that inside a
+cloud-synced folder can leave the virtual filesystem holding the file
+locked for anywhere from under a second to several minutes while the sync
+client catches up, which can make a routine launch look hung. As of
+v0.10.4, `run.ps1` installs to `%LOCALAPPDATA%\Plumb` instead of inside
+the repo specifically to avoid this — if you're on an older version and
+see a launch stall or an `UnauthorizedAccessException`-style error,
+upgrading past v0.10.4 (or moving the install outside the synced folder
+yourself) resolves it. The same class of slowdown affects `run.sh` on
+macOS/Linux if the repo itself lives in a Drive-synced folder.
+
+If you edit `run.ps1`/`run.bat` yourself: keep them pure ASCII. Windows
+PowerShell 5.1 reads a BOM-less `.ps1` under the legacy system codepage,
+not UTF-8, so a single non-ASCII character (an em dash, a smart quote)
+can silently corrupt the parser with a confusing error nowhere near the
+actual bad character. `.bat` files need CRLF line endings for the same
+reason — cmd.exe misparses LF-only `rem` comments that also contain a
+non-ASCII byte and can start executing comment text as commands.
+
 ## Local development — always run the current source
 
 Don't extract a release archive to iterate on the code — that's a snapshot,

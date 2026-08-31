@@ -23,5 +23,7 @@ __pycache__/
 .vscode/
 .idea/
 
-# Claude Code harness state — not part of the project
+# Local coding-assistant/agent state and instructions — personal working
+# notes, not part of the project's own documentation.
 .claude/
+CLAUDE.md
