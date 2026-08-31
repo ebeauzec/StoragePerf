@@ -121,9 +121,9 @@ metrics:
     # percentage — no unit conversion needed.
     query: 'avg(purefa_array_space_utilization{array="{array}"})'
     comparison: gt
-    severity_watch: 75
-    severity_critical: 85
-    threshold_label: "< 75% (illustrative)"
+    severity_watch: 70
+    severity_critical: 80
+    threshold_label: "< 70% (illustrative)"
     finding:
       watch: "Capacity utilization is at {value:.0f}%, above the {threshold:.0f}% illustrative guidance."
       critical: "Capacity utilization is at {value:.0f}% — capacity, not just performance, is now a near-term risk."

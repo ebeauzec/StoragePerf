@@ -71,7 +71,24 @@ rem so double-clicking this script doesn't hit that prompt. Harmless if
 rem it's already unblocked or PowerShell/policy prevents it.
 powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0' -Recurse | Unblock-File" >nul 2>&1
 plumb.exe
+rem Only pause on a nonzero exit (crash, port in use, blocked by AV, etc.)
+rem -- a normal Ctrl+C stop exits 0 and should just close the window, not
+rem demand a keypress every time. Without this, a startup failure flashes
+rem the window shut before its error message can be read.
+set PLUMB_EXIT=%ERRORLEVEL%
+if not "%PLUMB_EXIT%"=="0" (
+    echo.
+    echo Plumb exited with an error ^(code %PLUMB_EXIT%^) -- see the output above.
+    pause
+)
 EOF
+    # cmd.exe's batch parser can misparse a bare-LF file (which is all a
+    # heredoc ever produces) the moment a "rem" comment contains a
+    # non-ASCII byte, silently corrupting every line after it -- CRLF is
+    # what makes that safe regardless of what a future edit adds to the
+    # comments above. See run.bat at the repo root for the same fix and a
+    # from-scratch repro of the failure this avoids.
+    sed -i 's/$/\r/' "$outdir/start.bat"
   else
     cat > "$outdir/start.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -94,7 +111,18 @@ EOF
 
   ( cd "$DIST" && \
     if [ "$archive_ext" = "zip" ]; then
-      zip -qr "plumb-${VERSION}-${platform}.zip" "plumb-${VERSION}-${platform}"
+      if command -v zip >/dev/null 2>&1; then
+        zip -qr "plumb-${VERSION}-${platform}.zip" "plumb-${VERSION}-${platform}"
+      else
+        # Git Bash on Windows doesn't ship a zip binary, and this build
+        # script is now routinely run from a Windows dev machine (not just
+        # macOS/Linux) -- fall back to PowerShell's own Compress-Archive,
+        # which is present on every Windows install with no extra tool to
+        # source.
+        win_src=$(cd "plumb-${VERSION}-${platform}" && pwd -W)
+        win_dest="$(pwd -W)/plumb-${VERSION}-${platform}.zip"
+        powershell.exe -NoProfile -Command "Compress-Archive -Path '${win_src}\\*' -DestinationPath '${win_dest}' -Force"
+      fi
     else
       tar -czf "plumb-${VERSION}-${platform}.tar.gz" "plumb-${VERSION}-${platform}"
     fi
