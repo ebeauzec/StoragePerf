@@ -71,15 +71,20 @@ in that combination:
   built this way; caught only by actually running the published
   release end-to-end, not by inspecting the build output.
   See `native/scripts/build-native.sh`.
-- **Google Drive's virtual filesystem can throw, not just be slow.** A
-  `Test-Path` against a path that was just deleted/moved (this script's
-  own upgrade flow does exactly that: wipe `$Dest`, then immediately
-  recreate and recheck it) can throw `UnauthorizedAccessException`
-  ("Access is denied") instead of returning `$false`, for anywhere from
-  under a second to several seconds -- contention-driven, not a fixed
-  settling time. `run.ps1` retries these (`Test-PathResilient`); it's
-  not a 100% guarantee against arbitrarily long contention, just turns
-  the common case from a hard crash into a brief pause.
+- **Never install a repeatedly-rewritten binary into a cloud-synced
+  folder.** `run.ps1`'s own upgrade flow deletes and rewrites a ~12MB
+  `plumb.exe` on every run; doing that inside a Drive/OneDrive-synced
+  folder makes the virtual filesystem hold it locked for anywhere from
+  under a second to several *minutes* (confirmed by an actual user hit,
+  not just automated testing) -- `Test-Path` throws
+  `UnauthorizedAccessException` instead of returning `$false`, or a
+  plain write just fails. A short retry (tried first) wasn't enough --
+  the lock can outlast any retry budget short enough to not be an
+  annoying pause on every normal launch. The actual fix, as of v0.10.4:
+  install to `%LOCALAPPDATA%\Plumb` instead of inside the repo. Never
+  put a frequently-rewritten binary in a synced folder in the first
+  place; retrying around a cloud sync client's own locking behavior is
+  not a real fix.
 - **This checkout's executable bit is unreliable.** `chmod +x` on a
   `.sh` file sometimes doesn't stick when checked via `git diff` (the
   Drive-synced mount doesn't reliably report `stat()` permissions back to
