@@ -27,8 +27,20 @@
 #                create` commands; the account and permissions this
 #                collector needs are identical to what Harvest itself
 #                requires, since it queries the same REST endpoints.
-#   StorageGRID: a Grid Manager user with permission to sign in to the
-#                Grid Management API and read metrics.
+#   StorageGRID: a local Grid Manager user, in a group with the "Metrics
+#                query" permission and nothing more — this is a real,
+#                named permission (StorageGRID's own admin-group-permissions
+#                docs: it grants exactly custom Prometheus metric queries
+#                via the Grid Management API, which is the only thing this
+#                collector calls beyond signing in). No Root access,
+#                Tenant Accounts, ILM, or Maintenance permission needed.
+#                Every StorageGRID user must belong to a group with at
+#                least one permission to sign in at all, so "Metrics
+#                query" alone satisfies both that requirement and every
+#                API call this collector makes. Set the group's Access
+#                mode to Read-only for good measure, though "Metrics
+#                query" has no write capability to restrict in the first
+#                place.
 
 arrays:
   # --- Pure Storage FlashArray -------------------------------------------
