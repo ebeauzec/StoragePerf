@@ -201,11 +201,12 @@ a{color:inherit;}
 .config-grid{
   display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px 14px;
 }
-.config-field input, .config-field select{
+.config-field input, .config-field select, .config-field textarea{
   background:var(--surface-raised); border:1px solid var(--border); color:var(--text);
   border-radius:6px; padding:7px 9px; font-size:12.5px; font-family:"IBM Plex Mono"; width:100%;
 }
-.config-field input:focus, .config-field select:focus{outline:1px solid var(--accent-fe-dim);}
+.config-field textarea{resize:vertical;}
+.config-field input:focus, .config-field select:focus, .config-field textarea:focus{outline:1px solid var(--accent-fe-dim);}
 .config-label{font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:5px; display:block;}
 .config-field{display:flex; flex-direction:column;}
 .config-field.span-2{grid-column:span 2;}

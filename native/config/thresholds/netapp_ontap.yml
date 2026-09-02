@@ -7,12 +7,16 @@
 # from there.
 #
 # Metric names below (volume_avg_latency, volume_space_used_percent,
-# node_cpu_busy, aggr_disk_busy, snapmirror_lag_time, nic_util_percent,
+# volume_snapshot_used_percent, lun_space_used_percent,
+# qtree_quota_used_percent, node_cpu_busy, aggr_disk_busy,
+# snapmirror_lag_time, cluster_peer_unhealthy_percent, nic_util_percent,
 # nic_rx_crc_errors, aggr_space_used_percent) are produced under these exact
-# names by
-# internal/netappnative — if a panel shows no data, the collector itself
-# (data/logs/... won't help here, it's Plumb's own process) is where to
-# look, not a separate poller's scrape config.
+# names by internal/netappnative — if a panel shows no data, the collector
+# itself (data/logs/... won't help here, it's Plumb's own process) is where
+# to look, not a separate poller's scrape config. Some (LUN capacity, qtree
+# quota, cluster peer health) simply don't appear at all on a cluster with
+# none of that configured — see each collector's own comment for why that's
+# correct, not a bug.
 #
 # NetApp's own documentation is explicit that latency thresholds are
 # workload-dependent, not universal (their own KB example: a warning at
@@ -249,6 +253,10 @@ metrics:
     label: "SnapMirror Lag"
     unit: sec
     query: 'max(snapmirror_lag_time{array="{array}"})'
+    # Only emitted (see internal/netappnative/ontap.go's collectSnapMirrorLag)
+    # when a cluster has more than one relationship — a single relationship
+    # has nothing to break down, the fleet-wide max already names it.
+    node_breakdown_query: 'topk(10, snapmirror_lag_time_by_relationship{array="{array}"})'
     comparison: gt
     severity_watch: 90
     severity_critical: 180
@@ -257,6 +265,7 @@ metrics:
       watch: "SnapMirror lag is {value:.0f}s, above the 90s target."
       critical: "SnapMirror lag is {value:.0f}s — recovery point objective is at risk if this persists."
     investigate:
+      - "If more than one relationship is configured, check the breakdown below for which one is actually lagging — a single busy destination can pull the fleet-wide max up while every other relationship stays current."
       - "Check the replication network path's throughput/utilization between source and destination."
       - "Confirm the destination cluster's own health — a slow or busy destination causes lag on every incoming relationship."
       - "Review the source volume's change rate for a recent spike (bulk data load, migration)."
@@ -347,3 +356,109 @@ metrics:
       - "Reclaim space on the affected volume: reduce snapshot retention, remove orphaned clones, or run dedup/compression if not already enabled."
       - "Grow the volume (if the aggregate has room) or enable autogrow with a sensible ceiling."
       - "Move the volume to a less-utilized aggregate if growth is expected to continue."
+
+  - id: volume_snapshot_used_percent
+    category: backend
+    label: "Snapshot Space (worst volume)"
+    unit: "%"
+    # Percent of the VOLUME's own total size consumed by snapshots — not
+    # percent of snapshot reserve, since not every volume has a reserve
+    # configured, and "snapshots ate most of this volume" is the real
+    # complaint regardless of reserve setup. Worst single volume, same
+    # masking reasoning as volume_space_used_percent above.
+    query: 'max(volume_snapshot_used_percent{array="{array}"})'
+    node_breakdown_query: 'topk(10, volume_snapshot_used_percent_by_volume{array="{array}"})'
+    comparison: gt
+    severity_watch: 30
+    severity_critical: 50
+    threshold_label: "< 30% of volume size (engineering estimate — not independently published)"
+    finding:
+      watch: "Snapshots are consuming {value:.0f}% of this array's fullest volume — above the 30% guidance."
+      critical: "Snapshots are consuming {value:.0f}% of this array's fullest volume — snapshot retention is very likely driving that volume's own capacity pressure."
+    investigate:
+      - "Identify the specific volume from the breakdown below and review its snapshot policy/schedule and retention count."
+      - "Check for an unusually high change rate (bulk delete/rewrite) on that volume, which inflates snapshot space even with a normal retention count."
+    remediate:
+      - "Reduce snapshot retention or schedule frequency for the affected volume if it exceeds what's actually needed."
+      - "Delete specific old/large snapshots directly if a known one-time event (migration, bulk load) is responsible."
+      - "Increase the volume's snapshot reserve (or its overall size) if the current retention policy is intentional and needs the room."
+
+  - id: lun_space_used_percent
+    category: backend
+    label: "LUN Capacity (worst)"
+    unit: "%"
+    # A LUN can be provisioned smaller than the volume it lives in (thin or
+    # thick) and fill up on its own well before the volume does — invisible
+    # to volume_space_used_percent above. Not emitted at all on a NAS-only
+    # cluster with no LUNs configured (see collectLUNCapacity) — the panel
+    # simply won't appear rather than showing a permanent "unavailable".
+    query: 'max(lun_space_used_percent{array="{array}"})'
+    node_breakdown_query: 'topk(10, lun_space_used_percent_by_lun{array="{array}"})'
+    comparison: gt
+    severity_watch: 80
+    severity_critical: 95
+    threshold_label: "< 80% (matches ONTAP's own nearly-full EMS default)"
+    finding:
+      watch: "The fullest LUN on this array is at {value:.0f}% capacity — check the breakdown below for which one."
+      critical: "The fullest LUN on this array is at {value:.0f}% capacity — the host(s) mapped to it will see write failures soon if nothing changes."
+    investigate:
+      - "Identify the specific LUN from the breakdown below and confirm which host(s) it's mapped to."
+      - "Check whether the LUN is thin-provisioned and, if so, whether its containing volume/aggregate actually has room to grow into."
+    remediate:
+      - "Grow the LUN (if the containing volume has room) or work with the host owner to reclaim space (TRIM/UNMAP, delete unused files)."
+      - "Move the LUN to a less-utilized volume/aggregate if growth is expected to continue."
+
+  - id: qtree_quota_used_percent
+    category: backend
+    label: "Qtree Quota (worst)"
+    unit: "%"
+    # A qtree's quota is frequently far smaller than its containing volume
+    # (that's the point of setting one), so a qtree can be completely over
+    # quota while the volume and aggregate both show plenty of free space —
+    # a very common real support case this codebase had no visibility into
+    # before this metric. Only qtrees with an actual hard limit configured
+    # are included (see collectQtreeQuota) — "unlimited" entries aren't a
+    # ceiling to measure against. Not emitted on a cluster with no quotas
+    # configured, same as LUN capacity above.
+    query: 'max(qtree_quota_used_percent{array="{array}"})'
+    node_breakdown_query: 'topk(10, qtree_quota_used_percent_by_qtree{array="{array}"})'
+    comparison: gt
+    severity_watch: 85
+    severity_critical: 100
+    threshold_label: "< 85% of hard limit"
+    finding:
+      watch: "The qtree closest to its quota is at {value:.0f}% of its hard limit — check the breakdown below for which one."
+      critical: "A qtree has reached {value:.0f}% of its hard limit — writes into it are failing or about to fail, independent of the volume's own free space."
+    investigate:
+      - "Identify the specific volume/qtree from the breakdown below and check what's consuming space against its quota."
+      - "Confirm whether the quota itself was sized correctly for current usage, or has simply been outgrown."
+    remediate:
+      - "Raise the qtree's hard limit if the volume/aggregate has room and current usage is legitimate."
+      - "Work with the qtree's owner to reduce usage (delete/archive data) if the quota is intentional and should stay as-is."
+
+  - id: cluster_peer_unhealthy_percent
+    category: backend
+    label: "Cluster Peer Health"
+    unit: "%"
+    # SnapMirror destinations, MetroCluster partners, and other cross-
+    # cluster relationships all depend on the underlying cluster peer being
+    # healthy — a peer stuck outside ONTAP's own "available" state
+    # typically means every relationship riding on it is silently failing
+    # too, upstream of any individual snapmirror_lag reading. Percent
+    # rather than a raw count so the same thresholds mean the same thing
+    # regardless of how many peers are configured. Not emitted on a cluster
+    # with no peers configured at all — that's normal, not unhealthy.
+    query: 'max(cluster_peer_unhealthy_percent{array="{array}"})'
+    comparison: gt
+    severity_watch: 1
+    severity_critical: 50
+    threshold_label: "0% — every configured peer should be available"
+    finding:
+      watch: "{value:.0f}% of this cluster's configured peer relationships are not in ONTAP's own available state."
+      critical: "{value:.0f}% of this cluster's configured peer relationships are not available — replication and any other cross-cluster feature depending on them is very likely affected."
+    investigate:
+      - "Check `cluster peer show` (or System Manager's Cluster Peers view) for which specific peer is unhealthy and its reported reason."
+      - "Confirm network reachability and certificate validity between this cluster and the unhealthy peer — expired intercluster certificates are a common, silent cause."
+    remediate:
+      - "Re-establish or re-authenticate the peer relationship once the underlying network/certificate issue is resolved."
+      - "Escalate to the network team if the intercluster LIFs themselves are unreachable, rather than treating this as an ONTAP-side problem."

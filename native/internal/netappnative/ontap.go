@@ -64,6 +64,20 @@ import (
 //     syntax is copied directly from Harvest's own production Go source
 //     rather than guessed. aggr_disk_busy also gets a per-disk breakdown
 //     for the same reason node_cpu_busy gets a per-node one.
+//   - lun_space_used_percent(_by_lun) — GET /api/storage/luns, space.
+//     {size,used}. Same shape and reasoning as volume_space_used_percent,
+//     different resource — see collectLUNCapacity.
+//   - qtree_quota_used_percent(_by_qtree) — GET
+//     /api/storage/quota/reports?type=tree, space.used.total /
+//     space.hard_limit. See collectQtreeQuota.
+//   - volume_snapshot_used_percent(_by_volume) — GET /api/storage/volumes,
+//     space.snapshot.used as a percent of space.size. Shares the same page
+//     fetch as volume_space_used_percent (no separate request).
+//   - snapmirror_lag_time_by_relationship — added to the existing
+//     snapmirror_lag_time call, only emitted when a cluster has more than
+//     one relationship (see collectSnapMirrorLag).
+//   - cluster_peer_unhealthy_percent — GET /api/cluster/peers,
+//     status.state != "available". See collectClusterPeers.
 type ONTAPCollector struct {
 	mu       sync.Mutex
 	cpuState map[string]cpuSample
@@ -131,6 +145,8 @@ func (c *ONTAPCollector) WriteMetrics(w io.Writer, arr config.Array) error {
 	c.collectClusterLatency(pw, client, arr)
 	c.collectVolumeLatencyBreakdown(pw, client, arr)
 	c.collectVolumeCapacity(pw, client, arr)
+	c.collectLUNCapacity(pw, client, arr)
+	c.collectQtreeQuota(pw, client, arr)
 	c.collectNodeCPU(pw, client, arr)
 	c.collectAggregateCapacity(pw, client, arr)
 	c.collectSnapMirrorLag(pw, client, arr)
@@ -138,6 +154,7 @@ func (c *ONTAPCollector) WriteMetrics(w io.Writer, arr config.Array) error {
 	c.collectNICErrors(pw, client, arr)
 	c.collectAggrDiskBusy(pw, client, arr)
 	c.collectNICUtilization(pw, client, arr)
+	c.collectClusterPeers(pw, client, arr)
 
 	return pw.Emit(w)
 }
@@ -205,8 +222,11 @@ type volumeStatsResp struct {
 	Records []struct {
 		Name  string `json:"name"`
 		Space struct {
-			Size float64 `json:"size"`
-			Used float64 `json:"used"`
+			Size     float64 `json:"size"`
+			Used     float64 `json:"used"`
+			Snapshot struct {
+				Used float64 `json:"used"`
+			} `json:"snapshot"`
 		} `json:"space"`
 		Statistics struct {
 			IOPSRaw struct {
@@ -280,7 +300,7 @@ func (c *ONTAPCollector) collectVolumeLatencyBreakdown(pw *promWriter, client *h
 // is actually full, the same reasoning nic_utilization already uses max()
 // instead of avg() for port utilization.
 func (c *ONTAPCollector) collectVolumeCapacity(pw *promWriter, client *http.Client, arr config.Array) {
-	body, err := c.get(client, arr, "/api/storage/volumes?fields=name,space.size,space.used&max_records=200")
+	body, err := c.get(client, arr, "/api/storage/volumes?fields=name,space.size,space.used,space.snapshot.used&max_records=200")
 	if err != nil {
 		pw.note("volume_space_used_percent", "volume_space_used_percent unavailable for %s: %v", arr.ID, err)
 		return
@@ -295,7 +315,7 @@ func (c *ONTAPCollector) collectVolumeCapacity(pw *promWriter, client *http.Clie
 		return
 	}
 
-	worst := 0.0
+	worst, worstSnap := 0.0, 0.0
 	for _, v := range r.Records {
 		if v.Name == "" || v.Space.Size <= 0 {
 			continue
@@ -305,8 +325,130 @@ func (c *ONTAPCollector) collectVolumeCapacity(pw *promWriter, client *http.Clie
 		if pct > worst {
 			worst = pct
 		}
+		// Snapshot space as a percent of the volume's own total size (not
+		// just its snapshot reserve) — the more universally meaningful
+		// number, since not every volume has a reserve configured, and
+		// "snapshots consumed most of this volume" is the actual real-world
+		// complaint regardless of how the reserve is set up.
+		snapPct := v.Space.Snapshot.Used / v.Space.Size * 100
+		pw.gaugeNode("volume_snapshot_used_percent_by_volume", "Snapshot space used by volume, percent of volume size", arr.ID, v.Name, snapPct)
+		if snapPct > worstSnap {
+			worstSnap = snapPct
+		}
 	}
 	pw.gauge("volume_space_used_percent", "Worst single volume's capacity used, percent", arr.ID, worst)
+	pw.gauge("volume_snapshot_used_percent", "Worst single volume's snapshot space used, percent of volume size", arr.ID, worstSnap)
+}
+
+// lunsResp covers /api/storage/luns's space field group — same shape as
+// volumeStatsResp's space object, different resource. A LUN can be
+// provisioned smaller than the volume it lives in (thin or thick), so it
+// can fill up on its own well before the containing volume does —
+// invisible to volume_space_used_percent above.
+type lunsResp struct {
+	Records []struct {
+		Name  string `json:"name"`
+		Space struct {
+			Size float64 `json:"size"`
+			Used float64 `json:"used"`
+		} `json:"space"`
+	} `json:"records"`
+}
+
+// collectLUNCapacity mirrors collectVolumeCapacity exactly (worst LUN, not
+// an average — same reasoning). Skipped entirely (not even a note()) when a
+// cluster has no LUNs configured, since NAS-only clusters never provision
+// any — that's a normal, common state, not something worth flagging as
+// unavailable.
+func (c *ONTAPCollector) collectLUNCapacity(pw *promWriter, client *http.Client, arr config.Array) {
+	body, err := c.get(client, arr, "/api/storage/luns?fields=name,space.size,space.used&max_records=200")
+	if err != nil {
+		pw.note("lun_space_used_percent", "lun_space_used_percent unavailable for %s: %v", arr.ID, err)
+		return
+	}
+	var r lunsResp
+	if err := json.Unmarshal(body, &r); err != nil {
+		pw.note("lun_space_used_percent", "lun_space_used_percent unavailable for %s: could not parse /api/storage/luns response", arr.ID)
+		return
+	}
+	if len(r.Records) == 0 {
+		return
+	}
+
+	worst := 0.0
+	for _, l := range r.Records {
+		if l.Name == "" || l.Space.Size <= 0 {
+			continue
+		}
+		pct := l.Space.Used / l.Space.Size * 100
+		pw.gaugeNode("lun_space_used_percent_by_lun", "Capacity used by LUN, percent", arr.ID, l.Name, pct)
+		if pct > worst {
+			worst = pct
+		}
+	}
+	pw.gauge("lun_space_used_percent", "Worst single LUN's capacity used, percent", arr.ID, worst)
+}
+
+// quotaReportsResp covers /api/storage/quota/reports — the documented
+// endpoint for actual quota USAGE (as opposed to /api/storage/quota/rules,
+// which only has the configured policy, not what's currently consumed
+// against it). Filtered to type=tree entries (qtree-level quotas) via the
+// query string, not client-side, since a report can also include user/
+// group-level rows this metric isn't about.
+type quotaReportsResp struct {
+	Records []struct {
+		Qtree struct {
+			Name string `json:"name"`
+		} `json:"qtree"`
+		Volume struct {
+			Name string `json:"name"`
+		} `json:"volume"`
+		Space struct {
+			Used struct {
+				Total float64 `json:"total"`
+			} `json:"used"`
+			HardLimit float64 `json:"hard_limit"`
+		} `json:"space"`
+	} `json:"records"`
+}
+
+// collectQtreeQuota surfaces qtree quota usage — a qtree's quota is
+// frequently much smaller than its containing volume (that's the point of
+// a quota), so a qtree can be completely full while both its volume and
+// aggregate show plenty of free space. Entries with no hard limit set
+// (hard_limit <= 0, ONTAP's convention for "unlimited") are skipped rather
+// than treated as 100% used or divided-by-zero. Like LUNs, a cluster with
+// no quotas configured is normal — skipped silently, not a note().
+func (c *ONTAPCollector) collectQtreeQuota(pw *promWriter, client *http.Client, arr config.Array) {
+	body, err := c.get(client, arr, "/api/storage/quota/reports?fields=qtree.name,volume.name,space.used.total,space.hard_limit&type=tree&max_records=200")
+	if err != nil {
+		pw.note("qtree_quota_used_percent", "qtree_quota_used_percent unavailable for %s: %v", arr.ID, err)
+		return
+	}
+	var r quotaReportsResp
+	if err := json.Unmarshal(body, &r); err != nil {
+		pw.note("qtree_quota_used_percent", "qtree_quota_used_percent unavailable for %s: could not parse /api/storage/quota/reports response", arr.ID)
+		return
+	}
+	if len(r.Records) == 0 {
+		return
+	}
+
+	worst := 0.0
+	for _, q := range r.Records {
+		if q.Space.HardLimit <= 0 {
+			continue // "unlimited" in ONTAP's own quota model, not a real ceiling to measure against
+		}
+		name := q.Volume.Name + "/" + q.Qtree.Name
+		pct := q.Space.Used.Total / q.Space.HardLimit * 100
+		pw.gaugeNode("qtree_quota_used_percent_by_qtree", "Quota used by qtree, percent of hard limit", arr.ID, name, pct)
+		if pct > worst {
+			worst = pct
+		}
+	}
+	if worst > 0 {
+		pw.gauge("qtree_quota_used_percent", "Worst single qtree's quota used, percent of hard limit", arr.ID, worst)
+	}
 }
 
 type nodesResp struct {
@@ -427,7 +569,10 @@ func (c *ONTAPCollector) collectAggregateCapacity(pw *promWriter, client *http.C
 
 type snapmirrorResp struct {
 	Records []struct {
-		LagTime string `json:"lag_time"`
+		LagTime     string `json:"lag_time"`
+		Destination struct {
+			Path string `json:"path"`
+		} `json:"destination"`
 	} `json:"records"`
 }
 
@@ -455,8 +600,15 @@ func zeroIfEmpty(s string) string {
 	return s
 }
 
+// collectSnapMirrorLag also emits a per-relationship breakdown when there's
+// more than one relationship — a single array can replicate several
+// volumes to several destinations, and the fleet-wide max already tells you
+// something's lagging; the breakdown says which one, the same gap
+// volume_avg_latency's breakdown fills for latency. destination.path
+// (SVM:volume, e.g. "svm1:vol1_dr") is the natural label — more useful than
+// a bare relationship UUID.
 func (c *ONTAPCollector) collectSnapMirrorLag(pw *promWriter, client *http.Client, arr config.Array) {
-	body, err := c.get(client, arr, "/api/snapmirror/relationships?fields=lag_time")
+	body, err := c.get(client, arr, "/api/snapmirror/relationships?fields=lag_time,destination.path")
 	if err != nil {
 		pw.note("snapmirror_lag_time", "snapmirror_lag_time unavailable for %s: %v", arr.ID, err)
 		return
@@ -474,9 +626,21 @@ func (c *ONTAPCollector) collectSnapMirrorLag(pw *promWriter, client *http.Clien
 		return
 	}
 	var maxLag float64
-	for _, rel := range r.Records {
-		if secs, ok := parseISODurationSeconds(rel.LagTime); ok && secs > maxLag {
+	multiple := len(r.Records) > 1
+	for i, rel := range r.Records {
+		secs, ok := parseISODurationSeconds(rel.LagTime)
+		if !ok {
+			continue
+		}
+		if secs > maxLag {
 			maxLag = secs
+		}
+		if multiple {
+			label := rel.Destination.Path
+			if label == "" {
+				label = fmt.Sprintf("relationship-%d", i)
+			}
+			pw.gaugeNode("snapmirror_lag_time_by_relationship", "SnapMirror lag by relationship, seconds", arr.ID, label, secs)
 		}
 	}
 	pw.gauge("snapmirror_lag_time", "Maximum SnapMirror lag across relationships, seconds", arr.ID, maxLag)
@@ -564,4 +728,47 @@ func (c *ONTAPCollector) collectNICErrors(pw *promWriter, client *http.Client, a
 	// nic_errors query already wraps this in rate(...)*60, the standard
 	// Prometheus idiom for a counter.
 	pw.counter("nic_rx_crc_errors", "Cumulative NIC receive+transmit errors", arr.ID, total)
+}
+
+type clusterPeersResp struct {
+	Records []struct {
+		Name   string `json:"name"`
+		Status struct {
+			State string `json:"state"`
+		} `json:"status"`
+	} `json:"records"`
+}
+
+// collectClusterPeers reports the percent of configured cluster peer
+// relationships that are NOT in ONTAP's own "available" state — SnapMirror
+// destinations, MetroCluster partners, and other cross-cluster
+// relationships all depend on the underlying cluster peer being healthy,
+// so a peer stuck in "pending"/"unavailable" typically means every
+// relationship riding on it is silently failing too, upstream of any
+// individual SnapMirror lag number. A percent rather than a raw count so
+// the same watch/critical thresholds mean the same thing on a 2-peer
+// cluster and a 20-peer one. No peers configured at all (a cluster that
+// doesn't participate in any cross-cluster relationship) is normal and
+// skipped entirely, same as LUNs/quotas above.
+func (c *ONTAPCollector) collectClusterPeers(pw *promWriter, client *http.Client, arr config.Array) {
+	body, err := c.get(client, arr, "/api/cluster/peers?fields=name,status.state&max_records=200")
+	if err != nil {
+		pw.note("cluster_peer_unhealthy_percent", "cluster_peer_unhealthy_percent unavailable for %s: %v", arr.ID, err)
+		return
+	}
+	var r clusterPeersResp
+	if err := json.Unmarshal(body, &r); err != nil {
+		pw.note("cluster_peer_unhealthy_percent", "cluster_peer_unhealthy_percent unavailable for %s: could not parse /api/cluster/peers response", arr.ID)
+		return
+	}
+	if len(r.Records) == 0 {
+		return
+	}
+	var unhealthy int
+	for _, p := range r.Records {
+		if p.Status.State != "available" {
+			unhealthy++
+		}
+	}
+	pw.gauge("cluster_peer_unhealthy_percent", "Percent of configured cluster peers not in the available state", arr.ID, float64(unhealthy)/float64(len(r.Records))*100)
 }

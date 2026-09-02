@@ -661,7 +661,7 @@ function switchCardHtml(s, i) {
       )}
       ${field(
         "Linked array ports",
-        `<textarea data-field="links" rows="2" placeholder="fa-prod-east-01: Eth1/1, Eth1/2" style="width:100%;resize:vertical;">${linksToText(s.links)}</textarea>`,
+        `<textarea data-field="links" rows="2" placeholder="fa-prod-east-01: Eth1/1, Eth1/2">${linksToText(s.links)}</textarea>`,
         "span-2"
       )}
     </div>

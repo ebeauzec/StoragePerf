@@ -98,20 +98,67 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 
 		pct1 := arr.CurrentValue("volume_space_used_percent", arr.ID+"|volume_space_used_percent", "backend", 80, 95, now)
 		pct2 := arr.ValueForSeverity(arr.ID+"|volume_space_used_percent|vol-2", "healthy", 80, 95, now)
+		snapPct1 := arr.CurrentValue("volume_snapshot_used_percent", arr.ID+"|volume_snapshot_used_percent", "backend", 30, 50, now)
+		snapPct2 := arr.ValueForSeverity(arr.ID+"|volume_snapshot_used_percent|vol-2", "healthy", 30, 50, now)
 		const volSize = 500_000.0
 
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
 				{
 					"name":       arr.ID + "-vol-1",
-					"space":      map[string]any{"size": volSize, "used": volSize * pct1 / 100},
+					"space":      map[string]any{"size": volSize, "used": volSize * pct1 / 100, "snapshot": map[string]any{"used": volSize * snapPct1 / 100}},
 					"statistics": map[string]any{"iops_raw": map[string]any{"total": iops1}, "latency_raw": map[string]any{"total": latRaw1}},
 				},
 				{
 					"name":       arr.ID + "-vol-2",
-					"space":      map[string]any{"size": volSize, "used": volSize * pct2 / 100},
+					"space":      map[string]any{"size": volSize, "used": volSize * pct2 / 100, "snapshot": map[string]any{"used": volSize * snapPct2 / 100}},
 					"statistics": map[string]any{"iops_raw": map[string]any{"total": iops2}, "latency_raw": map[string]any{"total": latRaw2}},
 				},
+			},
+		})
+	})
+
+	mux.HandleFunc("GET /api/storage/luns", func(w http.ResponseWriter, r *http.Request) {
+		// lun_space_used_percent: same masking demo shape as volumes —
+		// lun-1 tracks the array's real severity, lun-2 always healthy.
+		now := time.Now()
+		pct1 := arr.CurrentValue("lun_space_used_percent", arr.ID+"|lun_space_used_percent", "backend", 80, 95, now)
+		pct2 := arr.ValueForSeverity(arr.ID+"|lun_space_used_percent|lun-2", "healthy", 80, 95, now)
+		const lunSize = 200_000.0
+		writeJSON(w, map[string]any{
+			"records": []map[string]any{
+				{"name": arr.ID + "-lun-1", "space": map[string]any{"size": lunSize, "used": lunSize * pct1 / 100}},
+				{"name": arr.ID + "-lun-2", "space": map[string]any{"size": lunSize, "used": lunSize * pct2 / 100}},
+			},
+		})
+	})
+
+	mux.HandleFunc("GET /api/storage/quota/reports", func(w http.ResponseWriter, r *http.Request) {
+		// qtree_quota_used_percent: same shape again — qtree-1 tracks real
+		// severity, qtree-2 always healthy.
+		now := time.Now()
+		pct1 := arr.CurrentValue("qtree_quota_used_percent", arr.ID+"|qtree_quota_used_percent", "backend", 85, 100, now)
+		pct2 := arr.ValueForSeverity(arr.ID+"|qtree_quota_used_percent|qtree-2", "healthy", 85, 100, now)
+		const hardLimit = 100_000.0
+		writeJSON(w, map[string]any{
+			"records": []map[string]any{
+				{"qtree": map[string]any{"name": "qtree-1"}, "volume": map[string]any{"name": arr.ID + "-vol-1"}, "space": map[string]any{"used": map[string]any{"total": hardLimit * pct1 / 100}, "hard_limit": hardLimit}},
+				{"qtree": map[string]any{"name": "qtree-2"}, "volume": map[string]any{"name": arr.ID + "-vol-1"}, "space": map[string]any{"used": map[string]any{"total": hardLimit * pct2 / 100}, "hard_limit": hardLimit}},
+			},
+		})
+	})
+
+	mux.HandleFunc("GET /api/cluster/peers", func(w http.ResponseWriter, r *http.Request) {
+		// cluster_peer_unhealthy_percent: one peer, its state driven by
+		// this array's own severity band rather than a numeric value —
+		// "available" when healthy, "unavailable" otherwise.
+		state := "available"
+		if arr.SeverityFor("cluster_peer_unhealthy_percent", "backend") != "healthy" {
+			state = "unavailable"
+		}
+		writeJSON(w, map[string]any{
+			"records": []map[string]any{
+				{"name": "dr-site-cluster", "status": map[string]any{"state": state}},
 			},
 		})
 	})
@@ -129,10 +176,18 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 	})
 
 	mux.HandleFunc("GET /api/snapmirror/relationships", func(w http.ResponseWriter, r *http.Request) {
-		sec := arr.CurrentValue("snapmirror_lag", arr.ID+"|snapmirror_lag", "backend", 90, 180, time.Now())
+		// Two relationships (not one) so the per-relationship breakdown
+		// (only emitted when there's more than one — see
+		// collectSnapMirrorLag) actually has something to demonstrate:
+		// dr-secondary tracks this array's real severity, dr-tertiary is
+		// always current, same masking-demo shape as every other breakdown.
+		now := time.Now()
+		sec1 := arr.CurrentValue("snapmirror_lag", arr.ID+"|snapmirror_lag", "backend", 90, 180, now)
+		sec2 := arr.ValueForSeverity(arr.ID+"|snapmirror_lag|dr-tertiary", "healthy", 90, 180, now)
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
-				{"lag_time": formatISODuration(sec)},
+				{"lag_time": formatISODuration(sec1), "destination": map[string]any{"path": "svm1:" + arr.ID + "_dr-secondary"}},
+				{"lag_time": formatISODuration(sec2), "destination": map[string]any{"path": "svm1:" + arr.ID + "_dr-tertiary"}},
 			},
 		})
 	})
