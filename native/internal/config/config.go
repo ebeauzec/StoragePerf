@@ -18,6 +18,7 @@ const (
 	VendorPureFlashBlade    = "pure_flashblade"
 	VendorNetAppONTAP       = "netapp_ontap"
 	VendorNetAppStorageGRID = "netapp_storagegrid"
+	VendorNetAppESeries     = "netapp_eseries"
 )
 
 // Array is one monitored system. Not every field applies to every vendor —
@@ -38,7 +39,9 @@ type Array struct {
 	TokenEnv    string `yaml:"token_env,omitempty" json:"token_env,omitempty"`
 	VerifyTLS   bool   `yaml:"verify_tls,omitempty" json:"verify_tls,omitempty"`
 
-	// NetApp ONTAP / StorageGRID (collected in-process — see internal/netappnative)
+	// NetApp ONTAP / StorageGRID / E-Series (collected in-process — see internal/netappnative).
+	// E-Series' embedded SANtricity REST API uses the same basic-auth-over-HTTPS
+	// shape as ONTAP's, so it reuses these same fields rather than needing its own.
 	ManagementLIF  string `yaml:"management_lif,omitempty" json:"management_lif,omitempty"`
 	Username       string `yaml:"username,omitempty" json:"username,omitempty"`
 	PasswordEnv    string `yaml:"password_env,omitempty" json:"password_env,omitempty"`
@@ -47,7 +50,7 @@ type Array struct {
 }
 
 func (a Array) IsNetApp() bool {
-	return a.Vendor == VendorNetAppONTAP || a.Vendor == VendorNetAppStorageGRID
+	return a.Vendor == VendorNetAppONTAP || a.Vendor == VendorNetAppStorageGRID || a.Vendor == VendorNetAppESeries
 }
 
 type arraysFile struct {

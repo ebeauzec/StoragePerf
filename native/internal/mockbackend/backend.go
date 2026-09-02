@@ -80,6 +80,8 @@ func (b *Backend) Start() error {
 			mux = ontapMux(arr)
 		case config.VendorNetAppStorageGRID:
 			mux = storagegridMux(arr)
+		case config.VendorNetAppESeries:
+			mux = eseriesMux(arr)
 		default:
 			continue
 		}

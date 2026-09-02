@@ -55,7 +55,7 @@ type ArrayReport struct {
 // same thing by "the" latency metric.
 func IsLatencyMetric(id string) bool {
 	switch id {
-	case "host_latency", "volume_avg_latency", "metadata_query_latency", "bucket_latency":
+	case "host_latency", "volume_avg_latency", "metadata_query_latency", "bucket_latency", "eseries_host_latency":
 		return true
 	}
 	return false

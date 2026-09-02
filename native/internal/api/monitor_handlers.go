@@ -323,6 +323,14 @@ func (a *App) handleDiscoverMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, content)
+	case config.VendorNetAppESeries:
+		content, err := a.ESeries.DiscoverESeriesCounters(arr)
+		if err != nil {
+			httpError(w, 502, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, content)
 	default:
 		httpError(w, 400, fmt.Errorf("unknown vendor %q", arr.Vendor))
 	}

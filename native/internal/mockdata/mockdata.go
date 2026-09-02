@@ -179,7 +179,26 @@ var Fleet = []Array{
 		},
 	},
 
-	// 6. Otherwise-healthy on every threshold metric, but with two open EMS
+	// 6. E-Series — a real second NetApp product line (SANtricity, not
+	// ONTAP), not just another ONTAP scenario. One hot drive (drive-1)
+	// masked by two healthy ones — same worst-first breakdown-and-escalate
+	// pattern as mock-ontap-cluster-03's aggr_disk_busy, Overrides-based
+	// rather than a flat Profile so the masking actually shows (a flat
+	// "critical" Profile forces every backend metric to the healthy band
+	// per SeverityFor's own front-end/back-end demo convention above — see
+	// mock-ontap-cluster-01, which for the same reason doesn't show masking
+	// either). Demonstrates that E-Series reuses the exact same node-
+	// breakdown and escalation machinery every other vendor already gets,
+	// not a separately-built parallel system.
+	{
+		ID: "mock-eseries-01", Name: "eseries-01", Model: "E5700", Vendor: config.VendorNetAppESeries,
+		Profile: "healthy",
+		Overrides: map[string]string{
+			"eseries_drive_latency": "critical",
+		},
+	},
+
+	// 7. Otherwise-healthy on every threshold metric, but with two open EMS
 	// events (see internal/netappnative/ems.go and mockbackend/ontap.go's
 	// "/api/support/ems/events" handler) — demonstrates that Plumb's Events
 	// tab surfaces genuinely actionable ONTAP occurrences (a failed disk,
@@ -199,7 +218,7 @@ func (a Array) AsConfigArray() config.Array {
 }
 
 func (a Array) IsNetApp() bool {
-	return a.Vendor == config.VendorNetAppONTAP || a.Vendor == config.VendorNetAppStorageGRID
+	return a.Vendor == config.VendorNetAppONTAP || a.Vendor == config.VendorNetAppStorageGRID || a.Vendor == config.VendorNetAppESeries
 }
 
 // bandFactor picks a center value and noise amplitude that render

@@ -1,0 +1,83 @@
+# Plumb — NetApp E-Series best-practice thresholds
+#
+# Collected in-process, directly from each storage system's own embedded
+# SANtricity REST API (basic auth over HTTPS to the controller) — see
+# internal/netappnative/eseries.go. Same collection model as ONTAP/
+# StorageGRID: no separate poller, Plumb's bundled Prometheus scrapes this
+# in-process collector, VictoriaMetrics ingests it from there.
+#
+# E-Series is architecturally different from ONTAP (SANtricity, not ONTAP;
+# storage system -> controller -> drive/volume-group -> volume, no SVMs or
+# aggregates), so this is a smaller, more conservative metric set than
+# netapp_ontap.yml's — three metrics covering the same front-end/back-end
+# split every other vendor gets, not a claim of full SANtricity API
+# coverage. Field names below are drawn from SANtricity's own published
+# REST API reference; if a panel shows no data, the collector itself is the
+# first place to look (see its own doc comments for which fields it reads).
+
+metrics:
+  - id: eseries_host_latency
+    category: frontend
+    label: "Host Latency (avg)"
+    unit: ms
+    query: 'avg(eseries_host_latency{array="{array}"})'
+    comparison: gt
+    severity_watch: 8
+    severity_critical: 15
+    threshold_label: "< 8 ms (illustrative — workload dependent)"
+    finding:
+      watch: "Average host-side latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance."
+      critical: "Average host-side latency is {value:.1f}ms — sustained latency in this range is workload-impacting for most applications."
+    investigate:
+      - "Check whether this is fleet-wide or isolated to one volume/host — a single busy volume competing for the same drives can drag the array-wide average up on its own."
+      - "Compare against Drive Latency (avg) below — if both are elevated together, the back-end itself is the bottleneck, not the host path in front of it."
+      - "Check the host side (multipath status, HBA/NIC errors, queue depth) if drive latency stays clean while this stays elevated."
+    remediate:
+      - "Rebalance workloads across volume groups/drives if one group is consistently hotter than the others."
+      - "Review host-side multipathing and queue depth settings against NetApp's SANtricity best-practice guidance for the host OS in use."
+
+  - id: eseries_drive_latency
+    category: backend
+    label: "Drive Latency (avg)"
+    unit: ms
+    query: 'avg(eseries_drive_latency{array="{array}"})'
+    node_breakdown_query: 'topk(10, eseries_drive_latency_by_drive{array="{array}"})'
+    escalate_to_node_severity: true
+    comparison: gt
+    severity_watch: 10
+    severity_critical: 20
+    threshold_label: "< 10 ms (illustrative)"
+    finding:
+      watch: "Average drive latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance."
+      critical: "Average drive latency is {value:.1f}ms — the drives themselves are a contributing factor, not just the path to them."
+    investigate:
+      - "Check the per-drive breakdown below — a single failing or rebuilding drive can drag its own volume group's latency up long before the array-wide average looks alarming."
+      - "Check for an active reconstruction/rebuild (a failed drive being rebuilt) — reconstruction I/O competes directly with production I/O on the same volume group."
+    remediate:
+      - "Replace a drive flagged as degraded or predicted-to-fail before it actually fails and forces a rebuild under load."
+      - "Spread hot volumes across more volume groups if one group's drives are consistently the bottleneck."
+    # escalate_to_node_severity: true because, like an ONTAP aggregate, a
+    # SANtricity volume group's drives are owned by a fixed controller/
+    # group with no automatic cross-group rebalancing — a bad drive in one
+    # group doesn't get absorbed by spare capacity elsewhere the way a
+    # quorum/erasure-coded system would. See config.MetricDef's own doc
+    # comment on this field for the full reasoning this follows.
+
+  - id: eseries_capacity_used_percent
+    category: backend
+    label: "Capacity Utilization"
+    unit: "%"
+    query: 'avg(eseries_capacity_used_percent{array="{array}"})'
+    comparison: gt
+    severity_watch: 75
+    severity_critical: 85
+    threshold_label: "< 75% — general storage capacity convention"
+    finding:
+      watch: "Capacity utilization is at {value:.0f}%, above the {threshold:.0f}% illustrative guidance."
+      critical: "Capacity utilization is at {value:.0f}% — capacity, not just performance, is now a near-term risk."
+    investigate:
+      - "Check which volume group is driving the total — SANtricity reports capacity per storage pool/volume group, not just system-wide."
+      - "Check for orphaned snapshots or thin-provisioned volumes with a much larger reported size than actual consumption if the number looks surprising."
+    remediate:
+      - "Expand the volume group (add drives) or migrate volumes to a group with more headroom before this becomes an outage, not just a warning."
+      - "Reclaim space from expired snapshots or reservations no longer needed."

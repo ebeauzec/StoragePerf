@@ -238,6 +238,7 @@ func main() {
 		Shutdown:    stop,
 		ONTAP:       netappnative.NewONTAPCollector(),
 		StorageGrid: netappnative.NewStorageGridCollector(),
+		ESeries:     netappnative.NewESeriesCollector(),
 		MockBackend: mockbackend.New(),
 		Findings:    findings,
 		Events:      events,

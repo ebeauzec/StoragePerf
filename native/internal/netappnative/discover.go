@@ -1,6 +1,7 @@
 package netappnative
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -155,6 +156,38 @@ func (c *StorageGridCollector) DiscoverStorageGRIDMetrics(arr config.Array) (str
 			}
 			fmt.Fprintf(&sb, "  e.g. %s\n", strings.Join(parts, ", "))
 		}
+	}
+	return sb.String(), nil
+}
+
+// DiscoverESeriesCounters dumps the raw, pretty-printed response of the two
+// analysed-statistics resources eseries.go actually reads — SANtricity's
+// REST API has no wildcard "list every metric" endpoint the way ONTAP's
+// counter-tables or StorageGRID's PromQL passthrough do, so the resource's
+// own full field set (most of which config/thresholds/netapp_eseries.yml
+// doesn't currently evaluate) is the most useful "what else is available"
+// answer available without guessing at undocumented endpoints.
+func (c *ESeriesCollector) DiscoverESeriesCounters(arr config.Array) (string, error) {
+	client := c.client(arr)
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# E-Series (SANtricity) discovery for %s\n", arr.ID)
+	fmt.Fprintf(&sb, "# Raw, full field set of the two per-resource statistics endpoints this collector\n")
+	fmt.Fprintf(&sb, "# reads from — see config/thresholds/netapp_eseries.yml for what's already evaluated.\n\n")
+
+	for _, path := range []string{"/storage-systems/1/analysed-volume-statistics", "/storage-systems/1/analysed-drive-statistics"} {
+		fmt.Fprintf(&sb, "## %s\n", path)
+		body, err := c.get(client, arr, path)
+		if err != nil {
+			fmt.Fprintf(&sb, "(unavailable: %v)\n\n", err)
+			continue
+		}
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, body, "", "  "); err != nil {
+			sb.Write(body)
+		} else {
+			sb.Write(pretty.Bytes())
+		}
+		sb.WriteString("\n\n")
 	}
 	return sb.String(), nil
 }

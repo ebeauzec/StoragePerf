@@ -56,9 +56,10 @@ const VENDOR_LABELS = {
   pure_flashblade: "Pure FlashBlade",
   netapp_ontap: "NetApp ONTAP",
   netapp_storagegrid: "NetApp StorageGRID",
+  netapp_eseries: "NetApp E-Series",
 };
 const vendorLabel = (v) => VENDOR_LABELS[v] || v || "—";
-const isNetApp = (v) => v === "netapp_ontap" || v === "netapp_storagegrid";
+const isNetApp = (v) => v === "netapp_ontap" || v === "netapp_storagegrid" || v === "netapp_eseries";
 
 function fmt(value, digits = 1) {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";

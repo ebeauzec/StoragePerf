@@ -44,6 +44,7 @@ type App struct {
 	Shutdown    func()                       // triggers main's graceful shutdown (server + sidecars) — see handleSelfUpdate
 	ONTAP       *netappnative.ONTAPCollector
 	StorageGrid *netappnative.StorageGridCollector
+	ESeries     *netappnative.ESeriesCollector
 	MockBackend *mockbackend.Backend
 	Findings    *findingstore.Store // nil disables findings history/webhooks entirely (e.g. a test harness)
 	Events      *eventstore.Store   // nil disables the Events tab entirely (e.g. a test harness) — see internal/netappnative/ems.go
@@ -212,6 +213,10 @@ func (a *App) handleScrapeNetApp(w http.ResponseWriter, r *http.Request) {
 		if err := a.StorageGrid.WriteMetrics(w, arr); err != nil {
 			httpError(w, 502, err)
 		}
+	case config.VendorNetAppESeries:
+		if err := a.ESeries.WriteMetrics(w, arr); err != nil {
+			httpError(w, 502, err)
+		}
 	default:
 		httpError(w, 400, fmt.Errorf("array %q is not a NetApp vendor", id))
 	}
@@ -260,6 +265,8 @@ func secondaryStat(id string) (ok bool, label, unit string) {
 		return true, "Queue", ""
 	case "node_cpu_busy", "node_cpu":
 		return true, "CPU", "%"
+	case "eseries_capacity_used_percent":
+		return true, "Cap", "%"
 	}
 	return false, "", ""
 }
