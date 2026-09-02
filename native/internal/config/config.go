@@ -22,8 +22,9 @@ const (
 
 // Array is one monitored system. Not every field applies to every vendor —
 // Pure arrays use Host/Scheme/TokenEnv (scraped directly through our proxy);
-// NetApp systems use ManagementLIF/Username/PasswordEnv (handed to a Harvest
-// poller, which does its own authenticated collection).
+// NetApp systems use ManagementLIF/Username/PasswordEnv, collected
+// in-process by internal/netappnative directly against the cluster's own
+// REST API — no separate poller process.
 type Array struct {
 	ID     string `yaml:"id" json:"id"`
 	Name   string `yaml:"name" json:"name"`
@@ -37,7 +38,7 @@ type Array struct {
 	TokenEnv    string `yaml:"token_env,omitempty" json:"token_env,omitempty"`
 	VerifyTLS   bool   `yaml:"verify_tls,omitempty" json:"verify_tls,omitempty"`
 
-	// NetApp ONTAP / StorageGRID (collected via a Harvest poller)
+	// NetApp ONTAP / StorageGRID (collected in-process — see internal/netappnative)
 	ManagementLIF  string `yaml:"management_lif,omitempty" json:"management_lif,omitempty"`
 	Username       string `yaml:"username,omitempty" json:"username,omitempty"`
 	PasswordEnv    string `yaml:"password_env,omitempty" json:"password_env,omitempty"`

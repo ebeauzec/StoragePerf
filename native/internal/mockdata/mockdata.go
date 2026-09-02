@@ -178,6 +178,20 @@ var Fleet = []Array{
 			"node_cpu": "critical",
 		},
 	},
+
+	// 6. Otherwise-healthy on every threshold metric, but with two open EMS
+	// events (see internal/netappnative/ems.go and mockbackend/ontap.go's
+	// "/api/support/ems/events" handler) — demonstrates that Plumb's Events
+	// tab surfaces genuinely actionable ONTAP occurrences (a failed disk,
+	// aggregate space pressure) that never cross any metric's watch/critical
+	// threshold at all: aggr_space_used_percent here reads comfortably
+	// healthy even though the array has just logged a capacity warning, the
+	// same real-world gap a purely threshold-driven dashboard has and EMS
+	// closes.
+	{
+		ID: "mock-ontap-ems-01", Name: "ontap-ems-01", Model: "AFF A250", Vendor: config.VendorNetAppONTAP,
+		Profile: "healthy",
+	},
 }
 
 func (a Array) AsConfigArray() config.Array {

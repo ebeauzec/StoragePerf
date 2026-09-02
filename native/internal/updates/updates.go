@@ -43,7 +43,7 @@ type target struct {
 var baseTargets = []target{
 	{"plumb", "Plumb", selfupdate.Repo, ""},
 	{"prometheus", "Prometheus", "prometheus/prometheus", "v3.14.0"},
-	{"victoriametrics", "VictoriaMetrics", "VictoriaMetrics/VictoriaMetrics", "v1.151.0"},
+	{"victoriametrics", "VictoriaMetrics", "VictoriaMetrics/VictoriaMetrics", "v1.150.0"},
 	{"pure_exporter_reference", "Pure metric-schema reference", "PureStorage-OpenConnect/pure-fa-openmetrics-exporter", ""},
 	{"harvest_reference", "NetApp Harvest metric-schema reference", "NetApp/harvest", ""},
 }

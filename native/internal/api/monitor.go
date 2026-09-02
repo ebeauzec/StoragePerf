@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"plumb/internal/config"
+	"plumb/internal/eventstore"
 	"plumb/internal/findingstore"
 	"plumb/internal/maintenance"
 	"plumb/internal/notify"
@@ -79,6 +80,40 @@ func (a *App) monitorOnce() {
 		if err != nil {
 			log.Printf("[monitor] evaluating %s: %v", arr.ID, err)
 			continue
+		}
+
+		// EMS events are collected straight from the array, never through
+		// Prometheus/VictoriaMetrics — see internal/netappnative/ems.go's
+		// doc comment for why. ONTAP only; StorageGRID and Pure have no EMS
+		// equivalent Plumb collects today.
+		if a.Events != nil && arr.Vendor == config.VendorNetAppONTAP && a.ONTAP != nil {
+			if emsEvents, err := a.ONTAP.CollectEMSEvents(arr); err != nil {
+				log.Printf("[monitor] collecting EMS events for %s: %v", arr.ID, err)
+			} else if len(emsEvents) > 0 {
+				converted := make([]eventstore.Event, len(emsEvents))
+				for i, e := range emsEvents {
+					converted[i] = eventstore.Event{
+						ArrayID: e.ArrayID, ArrayName: e.ArrayName, Source: "ems", Key: e.DedupKey(),
+						Time: e.Time.Format(time.RFC3339), Severity: e.Severity, Name: e.Name, Node: e.Node, Message: e.Message,
+					}
+				}
+				if err := a.Events.Append(converted); err != nil {
+					log.Printf("[monitor] saving EMS events for %s: %v", arr.ID, err)
+				}
+				if cfg.Enabled && cfg.WebhookURL != "" {
+					if muted, _ := maintenance.Active(windows, arr.ID, now); !muted {
+						for _, e := range emsEvents {
+							if !cfg.Meets(e.Severity) {
+								continue
+							}
+							ev := notify.Event{Kind: "ems", ArrayID: e.ArrayID, ArrayName: e.ArrayName, Vendor: arr.Vendor, Label: e.Name, Severity: e.Severity, Timestamp: e.Time, Body: e.Message}
+							if err := notify.Send(a.notifyClient(), cfg, ev); err != nil {
+								log.Printf("[monitor] webhook send failed for EMS event %s/%s: %v", e.ArrayID, e.Name, err)
+							}
+						}
+					}
+				}
+			}
 		}
 		// Sourced from res.Findings, not res.Panels directly — a panel with
 		// a NodeBreakdownQuery can have a node genuinely worse than its own

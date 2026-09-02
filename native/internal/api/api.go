@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"plumb/internal/config"
+	"plumb/internal/eventstore"
 	"plumb/internal/export"
 	"plumb/internal/findingstore"
 	"plumb/internal/mockbackend"
@@ -45,6 +46,7 @@ type App struct {
 	StorageGrid *netappnative.StorageGridCollector
 	MockBackend *mockbackend.Backend
 	Findings    *findingstore.Store // nil disables findings history/webhooks entirely (e.g. a test harness)
+	Events      *eventstore.Store   // nil disables the Events tab entirely (e.g. a test harness) — see internal/netappnative/ems.go
 
 	settingsMu              sync.RWMutex
 	mockData                bool
@@ -711,6 +713,7 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/reports/history/{name}", a.handleReportHistoryFile)
 	mux.HandleFunc("GET /api/findings", a.handleFindings)
 	mux.HandleFunc("GET /api/findings/history", a.handleFindingsHistory)
+	mux.HandleFunc("GET /api/events", a.handleEvents)
 	mux.HandleFunc("POST /api/findings/ack", a.handleAckFinding)
 	mux.HandleFunc("GET /api/maintenance", a.handleGetMaintenance)
 	mux.HandleFunc("POST /api/maintenance", a.handleSetMaintenance)

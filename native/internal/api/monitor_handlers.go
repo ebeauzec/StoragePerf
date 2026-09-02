@@ -52,6 +52,31 @@ func (a *App) handleFindingsHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, entries)
 }
 
+// --- Events (ONTAP EMS) ---
+
+func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if a.Events == nil {
+		writeJSON(w, []any{})
+		return
+	}
+	limit := 100
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	events, err := a.Events.List(r.URL.Query().Get("array_id"), limit)
+	if err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	if events == nil {
+		writeJSON(w, []any{})
+		return
+	}
+	writeJSON(w, events)
+}
+
 func (a *App) handleAckFinding(w http.ResponseWriter, r *http.Request) {
 	if a.Findings == nil {
 		httpError(w, 400, fmt.Errorf("findings history is not enabled"))

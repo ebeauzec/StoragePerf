@@ -18,6 +18,8 @@ const state = {
   scheduledReportInterval: "daily",
   scheduleOptions: [],
   maintenanceWindows: [],
+  events: [],
+  eventsSeverityFilter: "all", // "all" | "critical" | "watch" — see renderEventsSeverityPills
 };
 
 // 15M is the shortest SMOOTH window given the 15s scrape interval: at
@@ -342,6 +344,62 @@ async function renderFindingsHistory() {
   } catch (e) {
     el.innerHTML = "";
   }
+}
+
+/* ---------------- events (ONTAP EMS) ---------------- */
+const EVENT_SEVERITY_FILTERS = [
+  { value: "all", label: "All" },
+  { value: "critical", label: "Critical" },
+  { value: "watch", label: "Watch" },
+];
+
+function renderEventsSeverityPills() {
+  const el = document.getElementById("events-severity-pills");
+  if (!el) return;
+  el.innerHTML = EVENT_SEVERITY_FILTERS.map(
+    (f) => `<div class="range-pill ${f.value === state.eventsSeverityFilter ? "active" : ""}" data-severity="${f.value}">${f.label}</div>`
+  ).join("");
+  el.querySelectorAll(".range-pill").forEach((pill) =>
+    pill.addEventListener("click", () => {
+      state.eventsSeverityFilter = pill.dataset.severity;
+      renderEventsSeverityPills();
+      renderEventsRows(state.events || []);
+    })
+  );
+}
+
+function eventRowHtml(e) {
+  const when = new Date(e.time).toLocaleString();
+  return `<div class="update-row">
+    <span class="node-dot" style="background:${healthColor(e.severity)}; flex:none;"></span>
+    <div>
+      <div class="update-name">${e.name} <span class="finding-tag" style="margin-left:6px;">${e.array_name || e.array_id}</span>${e.node ? ` <span class="finding-tag" style="margin-left:4px;">${e.node}</span>` : ""}</div>
+      <div class="update-versions">${e.message || ""}</div>
+      <div class="update-versions">${e.severity} · ${when}</div>
+    </div>
+  </div>`;
+}
+
+function renderEventsRows(events) {
+  const el = document.getElementById("events-rows");
+  if (!el) return;
+  const filtered = state.eventsSeverityFilter === "all" ? events : events.filter((e) => e.severity === state.eventsSeverityFilter);
+  el.innerHTML = filtered.length
+    ? filtered.map(eventRowHtml).join("")
+    : '<div class="empty-note">No EMS events logged yet — this is expected on a fresh install, before the first poll, or for arrays with nothing to report.</div>';
+}
+
+async function loadEventsView() {
+  renderEventsSeverityPills();
+  try {
+    state.events = await api("/api/events?limit=200");
+  } catch (e) {
+    state.events = [];
+  }
+  const critical = state.events.filter((e) => e.severity === "critical").length;
+  const watch = state.events.filter((e) => e.severity === "watch").length;
+  document.getElementById("events-count").textContent = `Events — ${state.events.length} (${critical} critical, ${watch} watch)`;
+  renderEventsRows(state.events);
 }
 
 /* ---------------- maintenance windows ---------------- */
@@ -889,14 +947,23 @@ document.getElementById("save-arrays").addEventListener("click", async () => {
 });
 
 /* ---------------- tabs ---------------- */
-document.querySelectorAll(".tab").forEach((tab) =>
-  tab.addEventListener("click", async () => {
+// One entry per tab: which view div it shows, and what (if anything) to
+// load the first time it's opened. Every other tab's view is hidden.
+const TABS = [
+  { tab: "fleet", view: "view-fleet" },
+  { tab: "events", view: "view-events", onShow: loadEventsView },
+  { tab: "config", view: "view-config", onShow: loadConfigView },
+];
+document.querySelectorAll(".tab").forEach((tabEl) =>
+  tabEl.addEventListener("click", async () => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-    tab.classList.add("active");
-    const isConfig = tab.dataset.tab === "config";
-    document.getElementById("view-fleet").style.display = isConfig ? "none" : "block";
-    document.getElementById("view-config").style.display = isConfig ? "block" : "none";
-    if (isConfig) await loadConfigView();
+    tabEl.classList.add("active");
+    const active = tabEl.dataset.tab;
+    for (const t of TABS) {
+      document.getElementById(t.view).style.display = t.tab === active ? "block" : "none";
+    }
+    const entry = TABS.find((t) => t.tab === active);
+    if (entry && entry.onShow) await entry.onShow();
   })
 );
 

@@ -23,6 +23,7 @@
     </div>
     <div class="nav">
       <div class="nav-item tab active" data-tab="fleet">Fleet</div>
+      <div class="nav-item tab" data-tab="events">Events</div>
       <div class="nav-item tab" data-tab="config">Config</div>
     </div>
     <div class="topbar-right">
@@ -91,6 +92,20 @@
       <div class="section-note">The last findings that returned to normal, fleet-wide — from the persistent findings history</div>
     </div>
     <div id="findings-history-rows"></div>
+  </div>
+
+  <div id="view-events" style="display:none;">
+    <div class="section-head">
+      <div class="section-title" id="events-count">Events</div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <div class="section-note">ONTAP's own event log (EMS) — occurrences that don't cross a metric threshold, like a failed disk or a capacity warning</div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span class="section-note">Severity</span>
+          <div class="range-pills" id="events-severity-pills"></div>
+        </div>
+      </div>
+    </div>
+    <div id="events-rows"></div>
   </div>
 
   <div id="view-config" style="display:none;">

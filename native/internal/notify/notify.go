@@ -53,7 +53,7 @@ func (c Config) Meets(sev string) bool {
 // escalated, one resolved, a test ping from the Config tab, or a scheduled
 // report becoming available.
 type Event struct {
-	Kind      string // "new" | "escalated" | "resolved" | "test" | "report"
+	Kind      string // "new" | "escalated" | "resolved" | "ems" | "test" | "report"
 	ArrayID   string
 	ArrayName string
 	Vendor    string

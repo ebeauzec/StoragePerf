@@ -30,6 +30,7 @@ import (
 
 	"plumb/internal/api"
 	"plumb/internal/config"
+	"plumb/internal/eventstore"
 	"plumb/internal/findingstore"
 	"plumb/internal/mockbackend"
 	"plumb/internal/netappnative"
@@ -218,6 +219,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("loading findings store: %v", err)
 	}
+	events, err := eventstore.Open(layout.Data)
+	if err != nil {
+		log.Fatalf("loading event store: %v", err)
+	}
 
 	app := &api.App{
 		Version:     version,
@@ -235,6 +240,7 @@ func main() {
 		StorageGrid: netappnative.NewStorageGridCollector(),
 		MockBackend: mockbackend.New(),
 		Findings:    findings,
+		Events:      events,
 	}
 	if err := app.LoadSettings(); err != nil {
 		log.Fatalf("loading settings: %v", err)

@@ -1,21 +1,17 @@
 # Plumb — NetApp ONTAP best-practice thresholds
 #
-# Collected via NetApp's own official Harvest poller (github.com/NetApp/harvest),
-# not a custom scraper — Harvest does the authenticated REST/RestPerf
-# collection against the cluster and exposes a plain local Prometheus
-# endpoint that Plumb's bundled Prometheus scrapes directly.
+# Collected in-process, directly from each cluster's own REST API — see
+# internal/netappnative/ontap.go and ontap_countertables.go. Plumb's bundled
+# Prometheus then scrapes that in-process collector the same way it scrapes
+# every other array (see internal/targets), and VictoriaMetrics ingests it
+# from there.
 #
 # Metric names below (volume_avg_latency, node_cpu_busy, aggr_disk_busy,
 # snapmirror_lag_time, nic_util_percent, nic_rx_crc_errors,
-# aggr_space_used_percent) are verified against Harvest's own published
-# Grafana dashboards (github.com/NetApp/harvest/grafana/dashboards/cmode/)
-# as of August 2026. Harvest's exact label set can still vary by version —
-# if a panel shows no data, run:
-#
-#   curl http://127.0.0.1:<poller-port>/metrics | grep <metric_name>
-#
-# against the running poller (see data/generated/harvest.yml for assigned
-# ports) and adjust the query here.
+# aggr_space_used_percent) are produced under these exact names by
+# internal/netappnative — if a panel shows no data, the collector itself
+# (data/logs/... won't help here, it's Plumb's own process) is where to
+# look, not a separate poller's scrape config.
 #
 # NetApp's own documentation is explicit that latency thresholds are
 # workload-dependent, not universal (their own KB example: a warning at

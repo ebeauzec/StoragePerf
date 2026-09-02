@@ -199,6 +199,41 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		})
 	})
 
+	mux.HandleFunc("GET /api/support/ems/events", func(w http.ResponseWriter, r *http.Request) {
+		// internal/netappnative/ems.go's CollectEMSEvents — only mock-ontap-ems-01
+		// (see mockdata.Fleet's own comment on why) returns anything here; every
+		// other array is a healthy, event-free cluster. Indices are fixed so
+		// eventstore's dedup keeps exactly these two rows across every poll
+		// rather than accumulating duplicates with a fresh index each time.
+		if arr.ID != "mock-ontap-ems-01" {
+			writeJSON(w, map[string]any{"records": []map[string]any{}})
+			return
+		}
+		now := time.Now()
+		writeJSON(w, map[string]any{
+			"records": []map[string]any{
+				{
+					"index": 1001,
+					"time":  now.Add(-47 * time.Minute).Format(time.RFC3339),
+					"node":  map[string]any{"name": arr.ID + "-node-1"},
+					"message": map[string]any{
+						"name": "disk.failed", "severity": "error",
+						"description": "Disk 1.1.5 (S/N ABC123) has failed and been removed from active service.",
+					},
+				},
+				{
+					"index": 1002,
+					"time":  now.Add(-12 * time.Minute).Format(time.RFC3339),
+					"node":  map[string]any{"name": arr.ID + "-node-1"},
+					"message": map[string]any{
+						"name": "wafl.aggr.almostFull", "severity": "notice",
+						"description": "Aggregate aggr1 is over 90% full.",
+					},
+				},
+			},
+		})
+	})
+
 	return mux
 }
 
