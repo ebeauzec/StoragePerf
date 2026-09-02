@@ -3,6 +3,7 @@ const state = {
   selectedId: null,
   hours: 24,
   arraysConfig: [],
+  fleetSort: "severity", // "severity" | "name" — see renderFleetStrip
   mockData: false,
   retentionPeriod: "100y",
   retentionOptions: [],
@@ -104,17 +105,47 @@ async function api(path, opts) {
 }
 
 /* ---------------- fleet ---------------- */
-async function loadFleet() {
-  state.fleet = await api("/api/fleet");
-  if (!state.selectedId && state.fleet.length) state.selectedId = state.fleet[0].id;
+const FLEET_SORTS = [
+  { value: "severity", label: "Severity" },
+  { value: "name", label: "Name" },
+];
+// Worst-first — matches the same ranking rules.Severity uses server-side
+// (internal/rules/rules.go's severityRank) and the order BuildFleetReport
+// already sorts by, so "Severity" here means the same thing it does in a
+// fleet report, not a separate convention invented just for this view.
+const SEVERITY_SORT_RANK = { critical: 0, watch: 1, good: 2, unknown: 3 };
 
-  const critical = state.fleet.filter((a) => a.health === "critical").length;
-  const watch = state.fleet.filter((a) => a.health === "watch").length;
-  const good = state.fleet.filter((a) => a.health === "good").length;
-  document.getElementById("fleet-count").textContent = `Fleet — ${state.fleet.length} array${state.fleet.length === 1 ? "" : "s"}`;
-  document.getElementById("fleet-summary").textContent = `${critical} critical · ${watch} watch · ${good} optimal`;
+function sortedFleet() {
+  const list = state.fleet.slice();
+  if (state.fleetSort === "name") {
+    list.sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    list.sort((a, b) => {
+      const rankDiff = (SEVERITY_SORT_RANK[a.health] ?? 9) - (SEVERITY_SORT_RANK[b.health] ?? 9);
+      return rankDiff !== 0 ? rankDiff : a.name.localeCompare(b.name);
+    });
+  }
+  return list;
+}
 
-  document.getElementById("fleet-strip").innerHTML = state.fleet
+function renderFleetSortPills() {
+  const el = document.getElementById("fleet-sort-pills");
+  if (!el) return;
+  el.innerHTML = FLEET_SORTS.map((s) => `<div class="range-pill ${s.value === state.fleetSort ? "active" : ""}" data-sort="${s.value}">${s.label}</div>`).join("");
+  el.querySelectorAll(".range-pill").forEach((pill) =>
+    pill.addEventListener("click", () => {
+      state.fleetSort = pill.dataset.sort;
+      renderFleetSortPills();
+      renderFleetStrip();
+    })
+  );
+}
+
+// Renders #fleet-strip from the already-fetched state.fleet — split out of
+// loadFleet so switching the sort order re-renders instantly from cached
+// data instead of waiting on a network round-trip to /api/fleet.
+function renderFleetStrip() {
+  document.getElementById("fleet-strip").innerHTML = sortedFleet()
     .map(
       (a) => `
     <div class="fleet-card ${a.id === state.selectedId ? "selected" : ""}" data-id="${a.id}">
@@ -138,6 +169,19 @@ async function loadFleet() {
       renderFleetView();
     })
   );
+}
+
+async function loadFleet() {
+  state.fleet = await api("/api/fleet");
+  if (!state.selectedId && state.fleet.length) state.selectedId = state.fleet[0].id;
+
+  const critical = state.fleet.filter((a) => a.health === "critical").length;
+  const watch = state.fleet.filter((a) => a.health === "watch").length;
+  const good = state.fleet.filter((a) => a.health === "good").length;
+  document.getElementById("fleet-count").textContent = `Fleet — ${state.fleet.length} array${state.fleet.length === 1 ? "" : "s"}`;
+  document.getElementById("fleet-summary").textContent = `${critical} critical · ${watch} watch · ${good} optimal`;
+
+  renderFleetStrip();
 
   const dot = document.getElementById("live-dot");
   const label = document.getElementById("live-label");
@@ -555,8 +599,32 @@ async function loadConfigView() {
   scheduleSelect.value = state.scheduledReportInterval;
   document.getElementById("schedule-enabled-toggle").checked = state.scheduledReportsEnabled;
 
+  renderDiscoveryPicker();
+
   await Promise.all([renderUpdatesRows(), renderReportHistory()]);
 }
+
+/* ---------------- metrics discovery ---------------- */
+function renderDiscoveryPicker() {
+  const select = document.getElementById("discover-array-select");
+  if (!select) return;
+  const prior = select.value;
+  select.innerHTML =
+    state.fleet.map((a) => `<option value="${a.id}">${a.name} (${vendorLabel(a.vendor)})</option>`).join("") ||
+    '<option value="">No systems available — turn on mock data or add an array above</option>';
+  if (prior && state.fleet.some((a) => a.id === prior)) select.value = prior;
+  updateDiscoveryLink();
+}
+
+function updateDiscoveryLink() {
+  const select = document.getElementById("discover-array-select");
+  const link = document.getElementById("discover-link");
+  if (!select || !link) return;
+  const id = select.value;
+  link.href = id ? `/api/arrays/${id}/discover` : "#";
+}
+
+document.getElementById("discover-array-select").addEventListener("change", updateDiscoveryLink);
 
 /* ---------------- notifications ---------------- */
 document.getElementById("save-notify").addEventListener("click", async () => {
@@ -872,6 +940,7 @@ async function loadVersion() {
   }
 }
 
+renderFleetSortPills();
 tick();
 syncMockPill();
 loadVersion();

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"plumb/internal/config"
 	"plumb/internal/maintenance"
 	"plumb/internal/notify"
 	"plumb/internal/report"
@@ -247,6 +248,59 @@ func (a *App) handleSuggestedThresholds(w http.ResponseWriter, r *http.Request) 
 	rep := report.BuildBaselineReport(arr, allStats, start, end)
 	w.Header().Set("Content-Type", "text/html")
 	report.WriteBaselineReport(w, rep)
+}
+
+// --- Metrics discovery ---
+
+// handleDiscoverMetrics dumps every counter/metric a system's own API
+// exposes — not just the curated subset config/thresholds/*.yml
+// evaluates — as plain text a user can save and read through when looking
+// for what else Plumb could support. Pure arrays already publish
+// everything in one OpenMetrics scrape (see /scrape/{id}), so this just
+// hands back that same content for them rather than re-fetching it a
+// second way; NetApp systems need their own vendor-specific enumeration
+// (see internal/netappnative/discover.go for why each one is shaped the
+// way it is, and what it deliberately does and doesn't fetch).
+func (a *App) handleDiscoverMetrics(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	arr, ok, err := a.activeArray(id)
+	if err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	if !ok {
+		httpError(w, 404, fmt.Errorf("unknown array %q", id))
+		return
+	}
+
+	filename := fmt.Sprintf("%s-discovery-%s.txt", id, time.Now().Format("20060102-1504"))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+
+	switch arr.Vendor {
+	case config.VendorPureFlashArray, config.VendorPureFlashBlade:
+		// The array's own /metrics scrape already is the full, unfiltered
+		// list of everything it publishes — no separate enumeration step
+		// needed, just serve exactly what Prometheus itself would scrape.
+		http.Redirect(w, r, "/scrape/"+id, http.StatusFound)
+	case config.VendorNetAppONTAP:
+		content, err := a.ONTAP.DiscoverONTAPCounters(arr)
+		if err != nil {
+			httpError(w, 502, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, content)
+	case config.VendorNetAppStorageGRID:
+		content, err := a.StorageGrid.DiscoverStorageGRIDMetrics(arr)
+		if err != nil {
+			httpError(w, 502, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, content)
+	default:
+		httpError(w, 400, fmt.Errorf("unknown vendor %q", arr.Vendor))
+	}
 }
 
 // --- PDF exports ---

@@ -37,6 +37,10 @@
       <div class="section-title" id="fleet-count">Fleet</div>
       <div style="display:flex; align-items:center; gap:14px;">
         <div class="section-note" id="fleet-summary"></div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span class="section-note">Sort</span>
+          <div class="range-pills" id="fleet-sort-pills"></div>
+        </div>
         <a class="btn" id="fleet-report-link" href="#" target="_blank" rel="noopener">Fleet report</a>
         <a class="btn" id="fleet-report-pdf-link" href="#" download>Fleet PDF</a>
       </div>
@@ -191,6 +195,21 @@
       <button class="btn" id="add-array">+ Add array</button>
       <button class="btn btn-primary" id="save-arrays">Save changes</button>
       <span id="config-status" class="section-note"></span>
+    </div>
+
+    <div class="section-head">
+      <div class="section-title">Metrics Discovery</div>
+      <div class="section-note">Dumps every counter a system's own API can report — not just what Plumb currently evaluates — as a text file, for finding what else could be added</div>
+    </div>
+    <div class="config-card retention-card">
+      <div class="retention-row">
+        <div class="toggle-row-text"><div class="toggle-title">System</div></div>
+        <select id="discover-array-select" class="retention-select"></select>
+      </div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:10px;">
+        <a class="btn btn-primary" id="discover-link" href="#" download>Download discovery dump</a>
+        <span id="discover-status" class="section-note"></span>
+      </div>
     </div>
 
     <div class="section-head">

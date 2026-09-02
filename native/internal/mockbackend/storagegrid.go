@@ -100,6 +100,35 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 			result = nodeVector(arr, "s3_ops_get", "frontend", 100000, 200000, now)
 		case `rate(storagegrid_private_s3_total_requests{type=~"put_.*"}[5m]) * 60`:
 			result = nodeVector(arr, "s3_ops_put", "frontend", 100000, 200000, now)
+
+		case `{__name__=~".+"}`:
+			// DiscoverStorageGRIDMetrics' "list everything" query — this mock
+			// only matches known exact query strings rather than running a
+			// real PromQL engine, so answer it with one representative series
+			// per node for each metric name the collector itself already
+			// knows about, matching the shape (name + instance label) a real
+			// grid's own Prometheus would return.
+			names := []string{
+				"storagegrid_metadata_queries_average_latency_milliseconds",
+				"storagegrid_node_cpu_utilization_percentage",
+				"storagegrid_ilm_awaiting_total_objects",
+				"storagegrid_storage_utilization_total_space_bytes",
+				"storagegrid_storage_utilization_usable_space_bytes",
+				"storagegrid_s3_operations_failed",
+				"storagegrid_s3_data_transfers_bytes_ingested",
+				"storagegrid_s3_data_transfers_bytes_retrieved",
+				"storagegrid_private_s3_total_requests",
+				"node_network_receive_errs_total",
+				"node_network_transmit_errs_total",
+			}
+			for _, name := range names {
+				for _, node := range gridNodes(arr) {
+					result = append(result, map[string]any{
+						"metric": map[string]string{"__name__": name, "instance": node},
+						"value":  []any{now.Unix(), "0"},
+					})
+				}
+			}
 		}
 
 		if result == nil {

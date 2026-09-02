@@ -706,6 +706,7 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/reports/array/{id}/pdf", a.handleArrayReportPDF)
 	mux.HandleFunc("GET /api/reports/fleet/pdf", a.handleFleetReportPDF)
 	mux.HandleFunc("GET /api/reports/array/{id}/suggested-thresholds", a.handleSuggestedThresholds)
+	mux.HandleFunc("GET /api/arrays/{id}/discover", a.handleDiscoverMetrics)
 	mux.HandleFunc("GET /api/reports/history", a.handleReportHistory)
 	mux.HandleFunc("GET /api/reports/history/{name}", a.handleReportHistoryFile)
 	mux.HandleFunc("GET /api/findings", a.handleFindings)

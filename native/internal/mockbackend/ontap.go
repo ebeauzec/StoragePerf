@@ -118,6 +118,18 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		})
 	})
 
+	mux.HandleFunc("GET /api/cluster/counter/tables", func(w http.ResponseWriter, r *http.Request) {
+		// Lists exactly the two tables this mock actually serves a schema
+		// for below — enough for DiscoverONTAPCounters to demo successfully
+		// against mock data, same as every other mocked endpoint here.
+		writeJSON(w, map[string]any{
+			"records": []map[string]any{
+				{"name": "disk:constituent", "description": "Performance counters for constituents of a partitioned disk"},
+				{"name": "nic_common", "description": "Performance counters for network interface cards"},
+			},
+		})
+	})
+
 	mux.HandleFunc("GET /api/cluster/counter/tables/disk:constituent", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"name": "disk:constituent",
@@ -152,6 +164,16 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 			})
 		}
 		writeJSON(w, map[string]any{"records": records})
+	})
+
+	mux.HandleFunc("GET /api/cluster/counter/tables/nic_common", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"name": "nic_common",
+			"counter_schemas": []map[string]any{
+				{"name": "receive_bytes", "type": "delta", "unit": "bytes"},
+				{"name": "transmit_bytes", "type": "delta", "unit": "bytes"},
+			},
+		})
 	})
 
 	mux.HandleFunc("GET /api/cluster/counter/tables/nic_common/rows", func(w http.ResponseWriter, r *http.Request) {
