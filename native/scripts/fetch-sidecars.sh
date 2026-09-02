@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 PROM_VERSION=3.14.0
-VM_VERSION=1.150.0
+VM_VERSION=1.151.0
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
