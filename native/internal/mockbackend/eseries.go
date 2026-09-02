@@ -17,12 +17,15 @@ func eseriesMux(arr mockdata.Array) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /devmgr/v2/storage-systems/1/analysed-volume-statistics", func(w http.ResponseWriter, r *http.Request) {
-		// eseries_host_latency: display = avg(combinedResponseTime)/1000.
-		// A single synthetic volume is enough — the collector averages
-		// across whatever the array reports, one or many.
-		ms := arr.CurrentValue("eseries_host_latency", arr.ID+"|eseries_host_latency", "frontend", 8, 15, time.Now())
+		// eseries_host_latency(_by_volume): display = avg(combinedResponseTime)/1000
+		// across volumes. vol-1 carries the array's real severity, vol-2
+		// stays healthy — same masking demo as eseries_drive_latency below.
+		now := time.Now()
+		ms1 := arr.CurrentValue("eseries_host_latency", arr.ID+"|eseries_host_latency", "frontend", 8, 15, now)
+		ms2 := arr.ValueForSeverity(arr.ID+"|eseries_host_latency|vol-2", "healthy", 8, 15, now)
 		writeJSON(w, []map[string]any{
-			{"volumeId": "vol-1", "combinedResponseTime": ms * 1000},
+			{"volumeId": "vol-1", "combinedResponseTime": ms1 * 1000},
+			{"volumeId": "vol-2", "combinedResponseTime": ms2 * 1000},
 		})
 	})
 

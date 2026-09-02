@@ -108,6 +108,12 @@ type analysedVolumeStatsResp []struct {
 	CombinedResponseTime float64 `json:"combinedResponseTime"` // microseconds, per SANtricity's REST API reference
 }
 
+// collectHostLatency also emits a per-volume breakdown — volumeId is
+// already present on every row this call returns, so unlike ONTAP's
+// equivalent this needed no second endpoint, just using data already being
+// fetched. Same masking reasoning as every other breakdown in this
+// codebase: an array-wide average across every volume can hide one
+// genuinely slow one.
 func (c *ESeriesCollector) collectHostLatency(pw *promWriter, client *http.Client, arr config.Array) {
 	body, err := c.get(client, arr, "/storage-systems/1/analysed-volume-statistics")
 	if err != nil {
@@ -121,9 +127,13 @@ func (c *ESeriesCollector) collectHostLatency(pw *promWriter, client *http.Clien
 	}
 	var sum float64
 	for _, v := range r {
-		sum += v.CombinedResponseTime
+		ms := v.CombinedResponseTime / 1000.0
+		sum += ms
+		if v.VolumeID != "" {
+			pw.gaugeNode("eseries_host_latency_by_volume", "Host-side latency by volume, milliseconds", arr.ID, v.VolumeID, ms)
+		}
 	}
-	avgMs := (sum / float64(len(r))) / 1000.0
+	avgMs := sum / float64(len(r))
 	pw.gauge("eseries_host_latency", "Average host-side (volume) latency in milliseconds", arr.ID, avgMs)
 }
 

@@ -106,6 +106,30 @@ func writeFlashArrayMetrics(w http.ResponseWriter, arr mockdata.Array, counters 
 	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="usec_per_read_op"}`, readMs*1000)
 	fprintGauge(w, "purefa_array_performance_latency_usec", "FlashArray array latency in microseconds", `{dimension="usec_per_write_op"}`, writeMs*1000)
 
+	// host_latency's node_breakdown_query: purefa_volume_performance_latency_usec,
+	// same dimension convention, one level down (per volume). vol-1 tracks
+	// this array's real severity, vol-2 stays healthy — same masking demo
+	// as every other breakdown in this codebase.
+	vol1ReadMs := arr.CurrentValue("host_latency", arr.ID+"|host_latency|read", "frontend", 2.0, 3.5, now)
+	vol1WriteMs := arr.CurrentValue("host_latency", arr.ID+"|host_latency|write", "frontend", 2.0, 3.5, now)
+	vol2ReadMs := arr.ValueForSeverity(arr.ID+"|host_latency|vol-2|read", "healthy", 2.0, 3.5, now)
+	vol2WriteMs := arr.ValueForSeverity(arr.ID+"|host_latency|vol-2|write", "healthy", 2.0, 3.5, now)
+	fprintGauge(w, "purefa_volume_performance_latency_usec", "FlashArray volume latency in microseconds", `{name="vol-1",dimension="usec_per_read_op"}`, vol1ReadMs*1000)
+	fprintGauge(w, "purefa_volume_performance_latency_usec", "FlashArray volume latency in microseconds", `{name="vol-1",dimension="usec_per_write_op"}`, vol1WriteMs*1000)
+	fprintGauge(w, "purefa_volume_performance_latency_usec", "FlashArray volume latency in microseconds", `{name="vol-2",dimension="usec_per_read_op"}`, vol2ReadMs*1000)
+	fprintGauge(w, "purefa_volume_performance_latency_usec", "FlashArray volume latency in microseconds", `{name="vol-2",dimension="usec_per_write_op"}`, vol2WriteMs*1000)
+
+	// volume_space_used_percent: purefa_volume_space_bytes, total_physical
+	// vs total_provisioned per volume. vol-1 tracks real severity, vol-2
+	// stays healthy.
+	volSizeBytes := 2_000_000_000_000.0 // 2TB provisioned, a round number for a readable mock response
+	vol1Pct := arr.CurrentValue("volume_space_used_percent", arr.ID+"|volume_space_used_percent", "backend", 80, 95, now)
+	vol2Pct := arr.ValueForSeverity(arr.ID+"|volume_space_used_percent|vol-2", "healthy", 80, 95, now)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-1",space="total_provisioned"}`, volSizeBytes)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-1",space="total_physical"}`, volSizeBytes*vol1Pct/100)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-2",space="total_provisioned"}`, volSizeBytes)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-2",space="total_physical"}`, volSizeBytes*vol2Pct/100)
+
 	// host_iops_read / host_iops_write: purefa_array_performance_throughput_iops,
 	// dimension reads_per_sec/writes_per_sec — genuinely new metric, not
 	// previously emitted at all. Independent wave functions from latency
@@ -143,8 +167,13 @@ func writeFlashArrayMetrics(w http.ResponseWriter, arr mockdata.Array, counters 
 	fmt.Fprintf(w, `purefa_network_interface_performance_errors{interface="ct0.FC1"} %g`+"\n", total)
 
 	// replication_lag: avg(...) / 1000, thresholds in seconds -> emit ms.
+	// Two pods (not one) so the per-pod breakdown has something to
+	// demonstrate: dr-secondary tracks this array's real severity,
+	// dr-tertiary stays current, same masking-demo shape as everywhere else.
 	lagSec := arr.CurrentValue("replication_lag", arr.ID+"|replication_lag", "backend", 90, 180, now)
+	lagSec2 := arr.ValueForSeverity(arr.ID+"|replication_lag|dr-tertiary", "healthy", 90, 180, now)
 	fprintGauge(w, "purefa_pod_replica_links_lag_average_msec", "FlashArray pod replica links average lag in milliseconds", `{pod="dr-secondary"}`, lagSec*1000)
+	fprintGauge(w, "purefa_pod_replica_links_lag_average_msec", "FlashArray pod replica links average lag in milliseconds", `{pod="dr-tertiary"}`, lagSec2*1000)
 
 	// replication_bandwidth: sum(...) / 1e6, thresholds in MB/s -> emit bytes/sec.
 	replMBs := arr.CurrentValue("replication_bandwidth", arr.ID+"|replication_bandwidth", "backend", 1000, 2000, now)

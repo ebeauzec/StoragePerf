@@ -65,6 +65,13 @@ metrics:
     # to an exact alternation so this is genuinely avg(read op latency,
     # write op latency) and nothing else.
     query: 'avg(purefa_array_performance_latency_usec{array="{array}",dimension=~"^(usec_per_read_op|usec_per_write_op)$"}) / 1000'
+    # purefa_volume_performance_latency_usec is the same metric family, one
+    # level down — per-volume instead of array-wide, same dimension
+    # convention and confirmed against the same spec doc cited above.
+    # label_replace renames its "name" label to "node" — the generic label
+    # the breakdown mechanism (see rules.go) looks for regardless of what
+    # the entity actually is, same as every other vendor's breakdown query.
+    node_breakdown_query: 'topk(10, label_replace(avg by (name) (purefa_volume_performance_latency_usec{array="{array}",dimension=~"^(usec_per_read_op|usec_per_write_op)$"}), "node", "$1", "name", "(.*)") / 1000)'
     comparison: gt
     severity_watch: 2.0
     severity_critical: 3.5
@@ -73,6 +80,7 @@ metrics:
       watch: "Host-side latency is averaging {value:.1f}ms, above the {threshold:.1f}ms illustrative ceiling."
       critical: "Host-side latency is averaging {value:.1f}ms, well above the {threshold:.1f}ms illustrative ceiling — hosts will see this directly."
     investigate:
+      - "Check the breakdown below for which specific volume is driving the average."
       - "Check the array's front-end port statistics for retries, CRC errors, or link resets on the affected FC/iSCSI ports."
       - "Correlate the latency spike against host-side queue depth and multipath failover events in the same window."
       - "Confirm host HBA/NIC firmware and driver versions, and check for recent SAN fabric or switch changes."
@@ -283,6 +291,17 @@ metrics:
     # all links on the array; scope to one target with a pod/link label
     # filter once you've confirmed its exact name in your output.
     query: 'avg(purefa_pod_replica_links_lag_average_msec{array="{array}"}) / 1000'
+    # Breakdown by "pod" — the label this file's own mock (internal/
+    # mockbackend/pure.go) already uses and the framing above ("per pod/
+    # replica-link") already assumed, but unlike the metric name itself
+    # (independently confirmed via the exporter's own source, see
+    # replication_bandwidth below), this specific label name wasn't
+    # reconfirmed against a live array for this addition. Degrades
+    # gracefully either way: label_replace on a wrong label just yields an
+    # empty breakdown, not a broken panel — the array-wide query above is
+    # unaffected. Confirm the real label name in your own array's /metrics
+    # output before relying on this breakdown specifically.
+    node_breakdown_query: 'topk(10, label_replace(purefa_pod_replica_links_lag_average_msec{array="{array}"}, "node", "$1", "pod", "(.*)")) / 1000'
     comparison: gt
     severity_watch: 90
     severity_critical: 180
@@ -291,6 +310,7 @@ metrics:
       watch: "Replication lag is averaging {value:.0f}s, above the {threshold:.0f}s illustrative target."
       critical: "Replication lag is averaging {value:.0f}s — recovery point objective is at risk if this persists."
     investigate:
+      - "Check the breakdown below for which specific pod/replica-link is lagging, if more than one is configured."
       - "Check the replication_bandwidth panel below for the same window — rising lag with flat bandwidth suggests the link is saturated; rising lag with rising bandwidth suggests the source write rate is simply outpacing steady-state capacity."
       - "Confirm the target array's own health and capacity — a slow or full target array causes lag on every source relationship."
       - "Review the write change rate on the source during the lag window — a burst of writes can outpace steady-state replication bandwidth."
@@ -352,10 +372,43 @@ metrics:
       watch: "Capacity utilization is at {value:.0f}%, above the {threshold:.0f}% illustrative guidance."
       critical: "Capacity utilization is at {value:.0f}% — capacity, not just performance, is now a near-term risk."
     investigate:
-      - "Break down capacity usage by volume/pod to identify what's driving growth."
+      - "Check the volume_space_used_percent panel below for which specific volume is driving growth, rather than guessing from the array total alone."
       - "Check the array's own data-reduction ratio for any recent regression (e.g. a new, less-compressible workload)."
       - "Review snapshot retention policies — accumulated snapshots are a common silent capacity driver."
     remediate:
       - "Reclaim space via expired-snapshot cleanup or reduced retention if snapshots are the driver."
       - "Plan a capacity expansion (additional shelf/array) if growth is workload-driven and expected to continue."
       - "Migrate or archive cold data off the array if a specific dataset is responsible for the growth."
+
+  - id: volume_space_used_percent
+    category: backend
+    label: "Volume Capacity (worst)"
+    unit: "%"
+    # purefa_volume_space_bytes is real and confirmed (same spec doc as
+    # host_latency above), labeled by name/naa_id/pod/volume_group/space —
+    # "space" distinguishes total_physical (actual bytes consumed) from
+    # total_provisioned (the volume's nominal/provisioned size, what the
+    # host sees as the LUN size). Their ratio is a real per-volume percent-
+    # used, the same concept ONTAP's volume_space_used_percent covers — an
+    # array can have plenty of free space while one specific volume is
+    # itself full. ignoring(space) is required for the division to match
+    # series across the two different "space" label values on each side.
+    # Worst single volume (max), not an average, same reasoning as
+    # pool_saturation using array-wide utilization directly rather than
+    # averaging dissimilar volumes together.
+    query: 'max(purefa_volume_space_bytes{array="{array}",space="total_physical"} / ignoring(space) purefa_volume_space_bytes{array="{array}",space="total_provisioned"} * 100)'
+    node_breakdown_query: 'topk(10, label_replace(purefa_volume_space_bytes{array="{array}",space="total_physical"} / ignoring(space) purefa_volume_space_bytes{array="{array}",space="total_provisioned"} * 100, "node", "$1", "name", "(.*)"))'
+    comparison: gt
+    severity_watch: 80
+    severity_critical: 95
+    threshold_label: "< 80% of provisioned size"
+    finding:
+      watch: "The fullest volume on this array is at {value:.0f}% of its provisioned size — check the breakdown below for which one."
+      critical: "The fullest volume on this array is at {value:.0f}% of its provisioned size — writes to it will start failing soon if nothing changes, independent of the array's own free space."
+    investigate:
+      - "Identify the specific volume from the breakdown below and check what's consuming its space — data growth, snapshot retention, or a stuck/orphaned copy."
+      - "Confirm whether the volume is thin-provisioned and, if so, whether the array as a whole actually has physical room to accommodate real usage growing toward the provisioned size."
+    remediate:
+      - "Grow the volume's provisioned size (if the host/application can accommodate a larger LUN) or work with the host owner to reclaim space."
+      - "Reduce snapshot retention for the affected volume if snapshots are a significant share of its usage."
+      - "Migrate the volume to a less-utilized array if growth is expected to continue and this array is nearing its own physical capacity."

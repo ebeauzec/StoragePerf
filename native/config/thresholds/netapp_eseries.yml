@@ -21,6 +21,10 @@ metrics:
     label: "Host Latency (avg)"
     unit: ms
     query: 'avg(eseries_host_latency{array="{array}"})'
+    # analysed-volume-statistics already returns volumeId per row (see
+    # internal/netappnative/eseries.go's collectHostLatency) — the
+    # breakdown needed no second endpoint, just using data already fetched.
+    node_breakdown_query: 'topk(10, eseries_host_latency_by_volume{array="{array}"})'
     comparison: gt
     severity_watch: 8
     severity_critical: 15
@@ -29,7 +33,7 @@ metrics:
       watch: "Average host-side latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance."
       critical: "Average host-side latency is {value:.1f}ms — sustained latency in this range is workload-impacting for most applications."
     investigate:
-      - "Check whether this is fleet-wide or isolated to one volume/host — a single busy volume competing for the same drives can drag the array-wide average up on its own."
+      - "Check the breakdown below for which specific volume is driving the average — a single busy volume competing for the same drives can drag the array-wide average up on its own."
       - "Compare against Drive Latency (avg) below — if both are elevated together, the back-end itself is the bottleneck, not the host path in front of it."
       - "Check the host side (multipath status, HBA/NIC errors, queue depth) if drive latency stays clean while this stays elevated."
     remediate:
