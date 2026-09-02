@@ -154,6 +154,30 @@ var Fleet = []Array{
 			"pool_saturation": "healthy",
 		},
 	},
+
+	// 5. One hot StorageGRID node, deliberately the mirror image of
+	// mock-ontap-cluster-03 above rather than a variation on it. Same
+	// shape at the data level — one node driving a metric's raw value
+	// into critical territory while several healthy nodes dilute the
+	// grid-wide average back down to "good" — but a different, correct
+	// outcome: this node still gets its own specific finding (see
+	// BuildFindings' node-level block and blastRadiusNote), yet the
+	// grid's own panel badge and fleet health stay at the average's real
+	// "good" reading, because config.MetricDef.EscalateToNodeSeverity is
+	// deliberately unset for node_cpu (see netapp_storagegrid.yml's own
+	// comment on why) — StorageGRID's load balancer actively routes S3
+	// traffic away from a busy node, so one hot node here isn't the same
+	// event as one hot node in a 2-node ONTAP HA pair with nothing to
+	// fail over to. Compare this system against mock-ontap-cluster-03 to
+	// see the two vendors' escalation logic actually diverge live rather
+	// than taking the doc comments on faith.
+	{
+		ID: "mock-sg-grid-03", Name: "sg-grid-03", Model: "StorageGRID", Vendor: config.VendorNetAppStorageGRID,
+		Profile: "healthy",
+		Overrides: map[string]string{
+			"node_cpu": "critical",
+		},
+	},
 }
 
 func (a Array) AsConfigArray() config.Array {

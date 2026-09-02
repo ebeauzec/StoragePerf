@@ -130,6 +130,45 @@ type MetricDef struct {
 	// one — a "critical" badge on "throughput is high" is actively
 	// misleading, not a fact worth alarming on.
 	Informational bool `yaml:"informational,omitempty"`
+
+	// EscalateToNodeSeverity is optional and only meaningful alongside
+	// NodeBreakdownQuery: when true, a node/disk in the breakdown reporting
+	// worse than the fleet-wide value escalates this metric's own panel
+	// badge, and the array's overall health, to match — not just a
+	// separate node-level finding (that finding fires either way).
+	//
+	// This is NOT simply "does the metric have a breakdown" — it's "does
+	// this platform have any redundancy or automatic compensation that
+	// absorbs one bad node without the rest of the system inheriting the
+	// problem." That answer is architecture-specific, confirmed per metric
+	// against each vendor's own documentation rather than assumed:
+	//
+	//   - ONTAP (node_cpu_busy, aggr_disk_busy): true. An aggregate, and
+	//     the disks/CPU behind it, is owned by exactly one node in the HA
+	//     pair (docs.netapp.com/us-en/ontap/disks-aggregates) with no
+	//     automatic rebalancing — moving a workload off a hot node takes a
+	//     deliberate vol move or aggregate relocate. In a small (typically
+	//     2-node) cluster, one hot node is a large fraction of total
+	//     capacity with nothing else picking up the slack, so it's
+	//     correct for the whole cluster's badge to read the node's actual
+	//     severity, not the average that dilutes it away.
+	//   - StorageGRID (all nine of its NodeBreakdownQuery metrics): false.
+	//     Object data itself is deliberately spread across nodes with
+	//     redundancy (erasure coding tolerates losing multiple fragments;
+	//     replication keeps 2+ copies), and metadata reads need only a
+	//     QUORUM of an object's own replicas, not every node
+	//     (docs.netapp.com/us-en/storagegrid/s3/consistency.html). S3
+	//     traffic is actively load-balanced away from busy nodes by CPU
+	//     weighting (docs.netapp.com/us-en/storagegrid/admin/
+	//     managing-load-balancing.html) — the platform is explicitly
+	//     engineered to absorb exactly this kind of single-node
+	//     degradation. Escalating the whole grid to Critical because one
+	//     of possibly dozens of nodes is hot would misstate the actual
+	//     blast radius and risk alert fatigue that masks a real
+	//     grid-wide problem (most/all nodes elevated at once) later. The
+	//     node-level finding still fires and still names the specific
+	//     node — that's the right amount of alarm for a redundant system.
+	EscalateToNodeSeverity bool `yaml:"escalate_to_node_severity,omitempty"`
 }
 
 type thresholdsFile struct {

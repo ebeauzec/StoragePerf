@@ -38,9 +38,15 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 		var result []map[string]any
 		switch query {
 		case "avg(storagegrid_metadata_queries_average_latency_milliseconds)":
-			value, ok = arr.CurrentValue("metadata_query_latency", arr.ID+"|metadata_query_latency", "frontend", 50, 150, now), true
+			// nodeVectorMean, not arr.CurrentValue directly: this fleet-wide
+			// avg() must be the actual mean of the same per-node values the
+			// breakdown query below serves, or a masking scenario (one
+			// critical node diluted by several healthy ones) could never
+			// show up here at all — the two would just be two independently
+			// generated numbers that happen to share a target severity.
+			value, ok = nodeVectorMean(arr, "metadata_query_latency", "frontend", 50, 150, now), true
 		case "avg(storagegrid_node_cpu_utilization_percentage)":
-			value, ok = arr.CurrentValue("node_cpu", arr.ID+"|node_cpu", "backend", 70, 85, now), true
+			value, ok = nodeVectorMean(arr, "node_cpu", "backend", 70, 85, now), true
 		case "sum(storagegrid_ilm_awaiting_total_objects)":
 			value, ok = arr.CurrentValue("ilm_backlog", arr.ID+"|ilm_backlog", "backend", 100000, 1000000, now), true
 		case "sum(storagegrid_storage_utilization_total_space_bytes)":
@@ -207,4 +213,28 @@ func nodeVectorScaled(arr mockdata.Array, metricID, category string, watch, crit
 		})
 	}
 	return result
+}
+
+// nodeVectorMean is the mean of the exact same per-node values
+// nodeVectorScaled(..., scale=1, ...) would emit for this metric — used for
+// the corresponding fleet-wide avg() mock case so the two are guaranteed
+// consistent by construction, the same way a real grid's own Prometheus
+// avg() would be a true average of its own per-node series. Deriving the
+// fleet value independently (as arr.CurrentValue would) can't ever produce
+// a genuine masking scenario, since nothing then ties the "diluted average"
+// to the "one hot node" it's supposed to be diluting.
+func nodeVectorMean(arr mockdata.Array, metricID, category string, watch, critical float64, now time.Time) float64 {
+	nodes := gridNodes(arr)
+	severity := arr.SeverityFor(metricID, category)
+	culprit := culpritIndex(arr, metricID, len(nodes))
+
+	var sum float64
+	for i, node := range nodes {
+		nodeSeverity := "healthy"
+		if severity != "healthy" && i == culprit {
+			nodeSeverity = severity
+		}
+		sum += arr.ValueForSeverity(arr.ID+"|"+metricID+"|"+node, nodeSeverity, watch, critical, now)
+	}
+	return sum / float64(len(nodes))
 }

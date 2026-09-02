@@ -42,6 +42,18 @@ func severityRank(s Severity) int {
 	}
 }
 
+// blastRadiusNote states, in the finding itself rather than only in a
+// config comment someone has to go find, what a node/disk-level problem
+// actually means for the rest of the system — the two possible answers
+// track exactly config.MetricDef.EscalateToNodeSeverity's own reasoning,
+// so this can never drift out of sync with the escalation logic itself.
+func blastRadiusNote(m config.MetricDef) string {
+	if m.EscalateToNodeSeverity {
+		return "This platform has no automatic way to route around a bad node for this resource, so the impact is real and current for whatever this node is hosting right now — not just a statistic."
+	}
+	return "This platform's redundancy (replication/erasure coding, quorum reads, or load-balanced traffic, depending on the metric) typically contains the impact to whatever happens to touch this specific node — check whether other nodes show the same symptom before treating it as grid-wide."
+}
+
 func Classify(value float64, ok bool, watch, critical float64) Severity {
 	if !ok {
 		return Unknown
@@ -207,18 +219,18 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 				nodes = append(nodes, NodeValue{Node: node, Value: p.Value, Severity: classifyPanel(p.Value, true, m.SeverityWatch, m.SeverityCritical, m.Informational)})
 			}
 			sort.Slice(nodes, func(i, j int) bool { return nodes[i].Value > nodes[j].Value })
-			// The fleet-wide average classified above can mask a single hot
-			// node (that's the whole reason NodeBreakdownQuery exists) — a
-			// Finding already fires for that node elsewhere (see
-			// BuildFindings below), but without this, the panel's own badge
-			// would still show the averaged-out "good" right next to a
-			// breakdown row plainly reading e.g. 90%, contradicting itself
-			// in the same card.
-			for _, n := range nodes {
-				if severityRank(n.Severity) > severityRank(sev) {
-					sev = n.Severity
-				}
-			}
+			// Deliberately NOT escalating sev here: BuildFindings below
+			// needs the fleet-wide value's own, unescalated classification
+			// to correctly (a) word the general finding against the value
+			// it actually quotes, and (b) decide whether a node's own
+			// finding is "new" information worth its own entry. Escalating
+			// sev before that call would make node-1 at 90% (fleet-wide
+			// average, e.g. 56%) skip its own finding entirely — the fleet
+			// number would already "look" as bad, even though the finding
+			// text would then be quoting 56% under critical framing, which
+			// is simply wrong. See the post-BuildFindings pass below for
+			// where the panel's displayed badge actually gets escalated,
+			// once using the correct data on both sides.
 		}
 
 		panels = append(panels, Panel{
@@ -230,6 +242,32 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 	}
 
 	findings, health := BuildFindings(arr.ID, metrics, panels)
+
+	// Escalate each panel's own displayed badge to its worst node/disk,
+	// but only now — after Health and the findings above were already
+	// computed from the true, unescalated fleet-wide classification (see
+	// the long comment where nodes are built above for why doing this any
+	// earlier corrupts both). And only for a metric flagged
+	// EscalateToNodeSeverity: showing the panel's badge as worse than its
+	// own displayed fleet-wide value is exactly the kind of thing that
+	// should be architecture-justified per metric, not a blanket default
+	// for every vendor that happens to have a breakdown.
+	metricByID := make(map[string]config.MetricDef, len(metrics))
+	for _, m := range metrics {
+		metricByID[m.ID] = m
+	}
+	for i := range panels {
+		m, ok := metricByID[panels[i].ID]
+		if !ok || !m.EscalateToNodeSeverity {
+			continue
+		}
+		for _, n := range panels[i].Nodes {
+			if severityRank(n.Severity) > severityRank(panels[i].Severity) {
+				panels[i].Severity = n.Severity
+			}
+		}
+	}
+
 	return Result{Panels: panels, Findings: findings, Health: health}, nil
 }
 
@@ -252,13 +290,22 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 	var severities []Severity
 	for _, p := range panels {
 		severities = append(severities, p.Severity)
-		// A node/disk worse than its own panel's fleet-wide average must
-		// still count toward overall Health — otherwise the exact masking
-		// problem this breakdown exists to fix would just move up one
-		// level: the panel shows the hot node, but the array-wide badge
-		// still reads "good".
-		for _, n := range p.Nodes {
-			severities = append(severities, n.Severity)
+		// A node/disk worse than its own panel's fleet-wide average counts
+		// toward overall Health too, but only for a metric where a bad node
+		// genuinely has nowhere else for its workload to go — see
+		// config.MetricDef.EscalateToNodeSeverity's own doc comment for the
+		// per-vendor architecture reasoning. A StorageGRID grid's own
+		// redundancy (erasure coding/replication, quorum reads, load
+		// balancing away from busy nodes) means one hot node out of
+		// possibly dozens shouldn't paint the whole grid's health the same
+		// as the exact same finding would on a 2-node ONTAP HA pair, where
+		// nothing else absorbs it. The node-level finding below still
+		// fires and still names the node either way — this only gates
+		// whether it also inflates the system-wide badge.
+		if m, ok := metricByID[p.ID]; ok && m.EscalateToNodeSeverity {
+			for _, n := range p.Nodes {
+				severities = append(severities, n.Severity)
+			}
 		}
 		if p.Value == nil || (p.Severity != Watch && p.Severity != Critical) {
 			continue
@@ -318,8 +365,8 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 			}
 			findings = append(findings, Finding{
 				Severity: n.Severity, Tag: m.Category, Title: fmt.Sprintf("%s — %s", m.Label, n.Node),
-				Body: fmt.Sprintf("The fleet-wide average for this metric reads %s, but %s is masking that: %s",
-					strings.ToLower(string(p.Severity)), n.Node, formatTemplate(tmpl, n.Value, threshold)),
+				Body: fmt.Sprintf("The fleet-wide average for this metric reads %s, but %s is masking that: %s %s",
+					strings.ToLower(string(p.Severity)), n.Node, formatTemplate(tmpl, n.Value, threshold), blastRadiusNote(m)),
 				Ref:         fmt.Sprintf("%s · %s · %s", arrayID, m.ID, n.Node),
 				MetricID:    m.ID + "/" + n.Node,
 				Investigate: m.Investigate,

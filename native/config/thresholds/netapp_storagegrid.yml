@@ -13,6 +13,24 @@
 #
 # As with the other vendor files, the severity_watch / severity_critical
 # numbers are illustrative starting points, not published StorageGRID SLAs.
+#
+# None of the node_breakdown_query metrics below set
+# escalate_to_node_severity, unlike netapp_ontap.yml's node_cpu_busy/
+# aggr_disk_busy. That's a deliberate, researched difference, not an
+# oversight: a StorageGRID grid is built specifically to absorb one bad
+# node without the rest of the system inheriting the problem — erasure
+# coding and replication keep object data available across multiple
+# nodes' worth of redundancy, metadata reads only need a QUORUM of an
+# object's own replicas rather than every node
+# (docs.netapp.com/us-en/storagegrid/s3/consistency.html), and the Load
+# Balancer service on every Admin/Gateway node actively weights S3
+# traffic away from busy nodes
+# (docs.netapp.com/us-en/storagegrid/admin/managing-load-balancing.html).
+# One hot node out of possibly dozens is real and worth its own
+# node-level finding (which still fires either way), but it is not the
+# same event as an ONTAP HA pair losing half its compute with nothing to
+# fail over to — see config.MetricDef.EscalateToNodeSeverity's own doc
+# comment for the full comparison.
 
 metrics:
   - id: metadata_query_latency

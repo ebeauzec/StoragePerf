@@ -171,6 +171,15 @@ metrics:
     # internal/netappnative/ontap.go's collectNodeCPU.
     query: 'avg(node_cpu_busy{array="{array}"})'
     node_breakdown_query: 'node_cpu_busy_by_node{array="{array}"}'
+    # A hot node here has nowhere else for its CPU load to go: ONTAP does
+    # not automatically rebalance workloads across an HA pair, and an
+    # aggregate (and the CPU work behind it) is owned by exactly one node
+    # until someone deliberately relocates it
+    # (docs.netapp.com/us-en/ontap/disks-aggregates/relocate-aggregate-ownership-task.html).
+    # In a typical 2-node cluster that's half the system with nothing
+    # compensating — see config.MetricDef.EscalateToNodeSeverity for the
+    # full reasoning and the contrast with StorageGRID's redundant design.
+    escalate_to_node_severity: true
     comparison: gt
     severity_watch: 70
     severity_critical: 85
@@ -205,6 +214,11 @@ metrics:
     # and the breakdown UI has no pagination of its own).
     query: 'avg(aggr_disk_busy{array="{array}"})'
     node_breakdown_query: 'topk(10, aggr_disk_busy_by_node{array="{array}"})'
+    # Same reasoning as node_cpu_busy above: an aggregate's disks are
+    # owned by exactly one node with no automatic rebalancing, so a hot
+    # aggregate is a real, unmitigated problem for the whole cluster's
+    # badge to reflect, not just its own volumes.
+    escalate_to_node_severity: true
     comparison: gt
     severity_watch: 70
     severity_critical: 85
