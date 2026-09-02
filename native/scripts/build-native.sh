@@ -88,7 +88,14 @@ EOF
     # what makes that safe regardless of what a future edit adds to the
     # comments above. See run.bat at the repo root for the same fix and a
     # from-scratch repro of the failure this avoids.
-    sed -i 's/$/\r/' "$outdir/start.bat"
+    #
+    # perl, not sed -i: BSD sed (macOS) requires an explicit (even if
+    # empty) backup-suffix argument after -i, while GNU sed (Linux, Git
+    # Bash) treats a bare -i as "no backup" -- the two are incompatible in
+    # a way that silently breaks one platform whichever form is chosen.
+    # perl -i behaves the same on both, so this build script works
+    # regardless of which OS it's run from.
+    perl -pi -e 's/\n/\r\n/' "$outdir/start.bat"
   else
     cat > "$outdir/start.sh" <<'EOF'
 #!/usr/bin/env bash
