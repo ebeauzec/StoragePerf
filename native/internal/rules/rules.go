@@ -207,6 +207,18 @@ func EvaluateArray(client *vm.Client, arr config.Array, metrics []config.MetricD
 				nodes = append(nodes, NodeValue{Node: node, Value: p.Value, Severity: classifyPanel(p.Value, true, m.SeverityWatch, m.SeverityCritical, m.Informational)})
 			}
 			sort.Slice(nodes, func(i, j int) bool { return nodes[i].Value > nodes[j].Value })
+			// The fleet-wide average classified above can mask a single hot
+			// node (that's the whole reason NodeBreakdownQuery exists) — a
+			// Finding already fires for that node elsewhere (see
+			// BuildFindings below), but without this, the panel's own badge
+			// would still show the averaged-out "good" right next to a
+			// breakdown row plainly reading e.g. 90%, contradicting itself
+			// in the same card.
+			for _, n := range nodes {
+				if severityRank(n.Severity) > severityRank(sev) {
+					sev = n.Severity
+				}
+			}
 		}
 
 		panels = append(panels, Panel{
