@@ -6,9 +6,10 @@
 # every other array (see internal/targets), and VictoriaMetrics ingests it
 # from there.
 #
-# Metric names below (volume_avg_latency, node_cpu_busy, aggr_disk_busy,
-# snapmirror_lag_time, nic_util_percent, nic_rx_crc_errors,
-# aggr_space_used_percent) are produced under these exact names by
+# Metric names below (volume_avg_latency, volume_space_used_percent,
+# node_cpu_busy, aggr_disk_busy, snapmirror_lag_time, nic_util_percent,
+# nic_rx_crc_errors, aggr_space_used_percent) are produced under these exact
+# names by
 # internal/netappnative — if a panel shows no data, the collector itself
 # (data/logs/... won't help here, it's Plumb's own process) is where to
 # look, not a separate poller's scrape config.
@@ -26,6 +27,18 @@ metrics:
     label: "Volume Latency (avg)"
     unit: ms
     query: 'avg(volume_avg_latency{array="{array}"})'
+    # topk(10, ...) surfaces the worst 10 volumes by name — a cluster can
+    # have hundreds to thousands of volumes, unlike the small, fixed
+    # handful of nodes/aggregates node_cpu_busy and aggr_disk_busy break
+    # down. That's also why this deliberately does NOT set
+    # escalate_to_node_severity: one volume among a thousand crossing the
+    # critical line is a real problem for whatever workload uses it (and
+    # gets its own finding below either way — see
+    # config.MetricDef.EscalateToNodeSeverity), but flipping this array's
+    # entire front-end badge to critical over a single volume out of
+    # hundreds would be noisy rather than informative, unlike the 2-8-node
+    # case where one bad entry really is a large fraction of the system.
+    node_breakdown_query: 'topk(10, volume_avg_latency_by_volume{array="{array}"})'
     comparison: gt
     severity_watch: 8
     severity_critical: 15
@@ -34,7 +47,7 @@ metrics:
       watch: "Average volume latency is {value:.1f}ms, above the {threshold:.0f}ms illustrative guidance."
       critical: "Average volume latency is {value:.1f}ms — NetApp's own guidance treats sustained latency in this range as workload-impacting for most applications."
     investigate:
-      - "Identify which volume(s) are driving the average using the array's own per-volume latency breakdown."
+      - "Check the breakdown below for which specific volume(s) are driving the average."
       - "Check whether the affected volume(s) share an aggregate with a workload showing high disk or CPU busy (see the back-end panels)."
       - "Review QoS policy groups for the affected volumes — a throughput/IOPS ceiling can present as latency."
       - "Check the volume_avg_latency_read/volume_avg_latency_write panels below — a one-sided spike often points to a specific workload, not the cluster generally."
@@ -184,7 +197,7 @@ metrics:
       watch: "Node CPU busy is averaging {value:.0f}%, above NetApp's own 70% sustained guidance for ONTAP 9.7+."
       critical: "Node CPU busy is averaging {value:.0f}% — the controller itself is now a contributing factor, not just the path to it."
     investigate:
-      - "Check which processes/workloads are consuming CPU via Harvest's node/CPU-domain breakdown, if enabled."
+      - "Check the node's own per-process CPU domain breakdown (`node run -node <node> sysstat -x` or ONTAP System Manager's Performance view) for what's actually consuming cycles."
       - "Correlate against recent workload changes: new volumes, increased snapshot schedules, or deduplication/compression jobs."
       - "Check whether both nodes in an HA pair are elevated, or only one (possible uneven workload distribution)."
     remediate:
@@ -300,10 +313,37 @@ metrics:
       watch: "Aggregate capacity is at {value:.0f}%, above the 80% guidance — reduction efficiency or growth should be reviewed."
       critical: "Aggregate capacity is at {value:.0f}% — ONTAP's own performance degrades as aggregates approach full, on top of the capacity risk."
     investigate:
-      - "Break down aggregate usage by volume to identify what's driving growth."
+      - "Check the volume_space_used_percent panel below for which specific volume is driving growth, rather than guessing from the aggregate total alone."
       - "Check volume-level snapshot reserve and retention — accumulated snapshots are a common silent driver."
       - "Review storage-efficiency (dedup/compression) savings for any recent regression."
     remediate:
       - "Reclaim space via snapshot cleanup or reduced retention where safe."
       - "Move or archive cold volumes to a less-utilized aggregate or tier."
       - "Plan a capacity expansion if growth is workload-driven and ongoing — ONTAP performance also degrades as aggregates fill."
+
+  - id: volume_space_used_percent
+    category: backend
+    label: "Volume Capacity (worst)"
+    unit: "%"
+    # A cluster's aggregates can have plenty of free space while one
+    # specific thin-provisioned volume is itself full — a real outage for
+    # whatever uses that volume, invisible to aggr_capacity above.
+    # Deliberately the worst single volume (max), not an average across
+    # every volume — the same reasoning nic_utilization already uses max()
+    # for port utilization instead of averaging every port together.
+    query: 'max(volume_space_used_percent{array="{array}"})'
+    node_breakdown_query: 'topk(10, volume_space_used_percent_by_volume{array="{array}"})'
+    comparison: gt
+    severity_watch: 80
+    severity_critical: 95
+    threshold_label: "< 80% (matches ONTAP's own nearly-full EMS default)"
+    finding:
+      watch: "The fullest volume on this array is at {value:.0f}% capacity — check the breakdown below for which one."
+      critical: "The fullest volume on this array is at {value:.0f}% capacity — writes to it will start failing soon if nothing changes, independent of how much free space the rest of the array has."
+    investigate:
+      - "Identify the specific volume from the breakdown below and check what's consuming its space — data growth, snapshot retention, or a stuck/orphaned clone."
+      - "Confirm whether the volume autogrows and, if so, whether its containing aggregate actually has room to accommodate that."
+    remediate:
+      - "Reclaim space on the affected volume: reduce snapshot retention, remove orphaned clones, or run dedup/compression if not already enabled."
+      - "Grow the volume (if the aggregate has room) or enable autogrow with a sensible ceiling."
+      - "Move the volume to a less-utilized aggregate if growth is expected to continue."

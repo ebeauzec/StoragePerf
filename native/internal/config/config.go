@@ -270,6 +270,14 @@ type MetricDef struct {
 	//     grid-wide problem (most/all nodes elevated at once) later. The
 	//     node-level finding still fires and still names the specific
 	//     node — that's the right amount of alarm for a redundant system.
+	//   - ONTAP (volume_avg_latency, volume_space_used_percent): false, for
+	//     a different reason than StorageGRID above — not redundancy, but
+	//     cardinality. A cluster typically has 2-8 nodes/aggregates, so one
+	//     bad entry really is a large fraction of the system; it can have
+	//     hundreds to thousands of volumes, so one hot volume out of that
+	//     many crossing critical is a real problem for that volume's own
+	//     workload (and still gets its own finding below) but isn't
+	//     representative of the array as a whole the way a hot node is.
 	EscalateToNodeSeverity bool `yaml:"escalate_to_node_severity,omitempty"`
 }
 

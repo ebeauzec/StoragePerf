@@ -23,7 +23,11 @@ import (
 //   - volume_avg_latency  — GET /api/cluster/metrics, latency.total (µs→ms).
 //     Cluster-wide rather than per-volume: avoids an N+1 fetch across every
 //     volume on every 15s poll, and matches the array-wide granularity
-//     Plumb's own dashboard already shows.
+//     Plumb's own dashboard already shows. volume_avg_latency_by_volume and
+//     volume_space_used_percent(_by_volume) fill in the per-volume detail
+//     the cluster-wide number alone can't answer — GET /api/storage/volumes
+//     with the statistics/space field groups, one page (not per-volume, per
+//     collectVolumeLatencyBreakdown's own comment on why).
 //   - node_cpu_busy       — GET /api/cluster/nodes, statistics.processor_
 //     utilization_raw / _base. NetApp's own documented single-sample
 //     division (raw/base*100) is confirmed wrong (their KB article
@@ -63,6 +67,7 @@ import (
 type ONTAPCollector struct {
 	mu       sync.Mutex
 	cpuState map[string]cpuSample
+	volState map[string]volumeLatencySample
 	schemaState
 }
 
@@ -72,7 +77,7 @@ type cpuSample struct {
 }
 
 func NewONTAPCollector() *ONTAPCollector {
-	return &ONTAPCollector{cpuState: map[string]cpuSample{}, schemaState: newSchemaState()}
+	return &ONTAPCollector{cpuState: map[string]cpuSample{}, volState: map[string]volumeLatencySample{}, schemaState: newSchemaState()}
 }
 
 func (c *ONTAPCollector) client(arr config.Array) *http.Client {
@@ -124,6 +129,8 @@ func (c *ONTAPCollector) WriteMetrics(w io.Writer, arr config.Array) error {
 	client := c.client(arr)
 
 	c.collectClusterLatency(pw, client, arr)
+	c.collectVolumeLatencyBreakdown(pw, client, arr)
+	c.collectVolumeCapacity(pw, client, arr)
 	c.collectNodeCPU(pw, client, arr)
 	c.collectAggregateCapacity(pw, client, arr)
 	c.collectSnapMirrorLag(pw, client, arr)
@@ -185,6 +192,121 @@ func (c *ONTAPCollector) collectClusterLatency(pw *promWriter, client *http.Clie
 	} else {
 		pw.note("volume_avg_latency_write", "volume_avg_latency_write unavailable for %s: write latency not populated by /api/cluster/metrics on this ONTAP version", arr.ID)
 	}
+}
+
+// volumeStatsResp covers the "statistics" field group on the standard
+// /api/storage/volumes list resource — the same RWOT (read/write/other/
+// total) raw-counter convention collectClusterLatency's own comment already
+// documents for /api/cluster/metrics, exposed per volume instead of
+// cluster-wide. latency_raw/iops_raw are cumulative since the last counter
+// reset, not a ready-to-use rate — same reason node CPU needs a delta
+// between two polls rather than a single sample.
+type volumeStatsResp struct {
+	Records []struct {
+		Name  string `json:"name"`
+		Space struct {
+			Size float64 `json:"size"`
+			Used float64 `json:"used"`
+		} `json:"space"`
+		Statistics struct {
+			IOPSRaw struct {
+				Total float64 `json:"total"`
+			} `json:"iops_raw"`
+			LatencyRaw struct {
+				Total float64 `json:"total"`
+			} `json:"latency_raw"`
+		} `json:"statistics"`
+	} `json:"records"`
+}
+
+type volumeLatencySample struct {
+	latencyRaw, iopsRaw float64
+}
+
+// collectVolumeLatencyBreakdown adds a per-volume breakdown on top of
+// collectClusterLatency's existing cluster-wide volume_avg_latency (which
+// this never touches — a separate _by_volume metric name, same reasoning
+// as node_cpu_busy_by_node). volume_avg_latency's own investigate text
+// already asks "which volume(s) are driving the average" — this answers
+// it. Capped to what one /api/storage/volumes page returns (max_records
+// below) rather than paging through every volume on a large cluster on
+// every 15s poll — the topk(10, ...) query in
+// config/thresholds/netapp_ontap.yml only ever needs the worst few anyway,
+// and a page this size is very unlikely to exclude a genuinely hot volume
+// from the top 10.
+func (c *ONTAPCollector) collectVolumeLatencyBreakdown(pw *promWriter, client *http.Client, arr config.Array) {
+	body, err := c.get(client, arr, "/api/storage/volumes?fields=name,statistics.iops_raw.total,statistics.latency_raw.total&max_records=200")
+	if err != nil {
+		pw.note("volume_avg_latency_by_volume", "volume_avg_latency_by_volume unavailable for %s: %v", arr.ID, err)
+		return
+	}
+	var r volumeStatsResp
+	if err := json.Unmarshal(body, &r); err != nil {
+		pw.note("volume_avg_latency_by_volume", "volume_avg_latency_by_volume unavailable for %s: could not parse /api/storage/volumes response", arr.ID)
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	anyEmitted := false
+	for _, v := range r.Records {
+		if v.Name == "" {
+			continue
+		}
+		key := "vol|" + arr.ID + "|" + v.Name
+		prev, had := c.volState[key]
+		cur := volumeLatencySample{latencyRaw: v.Statistics.LatencyRaw.Total, iopsRaw: v.Statistics.IOPSRaw.Total}
+		c.volState[key] = cur
+		if !had || cur.iopsRaw <= prev.iopsRaw {
+			continue // first sample for this volume, or an idle/reset counter — nothing to diff yet
+		}
+		ms := (cur.latencyRaw - prev.latencyRaw) / (cur.iopsRaw - prev.iopsRaw) / 1000.0
+		if ms < 0 {
+			continue // counter reset between polls (e.g. volume move) — skip rather than publish a negative
+		}
+		pw.gaugeNode("volume_avg_latency_by_volume", "Average latency by volume, milliseconds", arr.ID, v.Name, ms)
+		anyEmitted = true
+	}
+	if !anyEmitted {
+		pw.note("volume_avg_latency_by_volume", "volume_avg_latency_by_volume warming up for %s (needs a second sample per volume to compute a rate)", arr.ID)
+	}
+}
+
+// collectVolumeCapacity is a plain capacity read (space.size/space.used are
+// already absolute, unlike the _raw performance counters above — no delta
+// needed, same as collectAggregateCapacity). Fleet-wide value is the worst
+// (max) volume rather than an average: an average across every volume on
+// the cluster tells you almost nothing useful about whether any single one
+// is actually full, the same reasoning nic_utilization already uses max()
+// instead of avg() for port utilization.
+func (c *ONTAPCollector) collectVolumeCapacity(pw *promWriter, client *http.Client, arr config.Array) {
+	body, err := c.get(client, arr, "/api/storage/volumes?fields=name,space.size,space.used&max_records=200")
+	if err != nil {
+		pw.note("volume_space_used_percent", "volume_space_used_percent unavailable for %s: %v", arr.ID, err)
+		return
+	}
+	var r volumeStatsResp
+	if err := json.Unmarshal(body, &r); err != nil {
+		pw.note("volume_space_used_percent", "volume_space_used_percent unavailable for %s: could not parse /api/storage/volumes response", arr.ID)
+		return
+	}
+	if len(r.Records) == 0 {
+		pw.note("volume_space_used_percent", "volume_space_used_percent unavailable for %s: no records in /api/storage/volumes response", arr.ID)
+		return
+	}
+
+	worst := 0.0
+	for _, v := range r.Records {
+		if v.Name == "" || v.Space.Size <= 0 {
+			continue
+		}
+		pct := v.Space.Used / v.Space.Size * 100
+		pw.gaugeNode("volume_space_used_percent_by_volume", "Capacity used by volume, percent", arr.ID, v.Name, pct)
+		if pct > worst {
+			worst = pct
+		}
+	}
+	pw.gauge("volume_space_used_percent", "Worst single volume's capacity used, percent", arr.ID, worst)
 }
 
 type nodesResp struct {

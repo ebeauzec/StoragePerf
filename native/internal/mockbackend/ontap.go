@@ -79,6 +79,43 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		})
 	})
 
+	mux.HandleFunc("GET /api/storage/volumes", func(w http.ResponseWriter, r *http.Request) {
+		// Covers both volume_avg_latency_by_volume and
+		// volume_space_used_percent(_by_volume) — one real endpoint serves
+		// both statistics.* and space.* field groups, so one mock handler
+		// does too. Two synthetic volumes, same masking demo as node-1/
+		// node-2 for node_cpu_busy: vol-1 tracks this array's real severity,
+		// vol-2 is always healthy, so the breakdown shows a genuinely hot
+		// volume the fleet-wide worst-of/average alone might not make obvious.
+		now := time.Now()
+		latMs1 := arr.CurrentValue("volume_avg_latency", arr.ID+"|volume_avg_latency", "frontend", 8, 15, now)
+		latMs2 := arr.ValueForSeverity(arr.ID+"|volume_avg_latency|vol-2", "healthy", 8, 15, now)
+		const opsPerTick = 100.0
+		iops1 := counters.accumulate(arr.ID+"|vol1_iops", opsPerTick)
+		latRaw1 := counters.accumulate(arr.ID+"|vol1_latency_raw", latMs1*1000*opsPerTick)
+		iops2 := counters.accumulate(arr.ID+"|vol2_iops", opsPerTick)
+		latRaw2 := counters.accumulate(arr.ID+"|vol2_latency_raw", latMs2*1000*opsPerTick)
+
+		pct1 := arr.CurrentValue("volume_space_used_percent", arr.ID+"|volume_space_used_percent", "backend", 80, 95, now)
+		pct2 := arr.ValueForSeverity(arr.ID+"|volume_space_used_percent|vol-2", "healthy", 80, 95, now)
+		const volSize = 500_000.0
+
+		writeJSON(w, map[string]any{
+			"records": []map[string]any{
+				{
+					"name":       arr.ID + "-vol-1",
+					"space":      map[string]any{"size": volSize, "used": volSize * pct1 / 100},
+					"statistics": map[string]any{"iops_raw": map[string]any{"total": iops1}, "latency_raw": map[string]any{"total": latRaw1}},
+				},
+				{
+					"name":       arr.ID + "-vol-2",
+					"space":      map[string]any{"size": volSize, "used": volSize * pct2 / 100},
+					"statistics": map[string]any{"iops_raw": map[string]any{"total": iops2}, "latency_raw": map[string]any{"total": latRaw2}},
+				},
+			},
+		})
+	})
+
 	mux.HandleFunc("GET /api/private/cli/snapmirror", func(w http.ResponseWriter, r *http.Request) {
 		// snapmirror_bandwidth: rate(...)/1e6, thresholds in MB/s -> accumulate
 		// a raw cumulative byte counter, same pattern as nic_errors.
