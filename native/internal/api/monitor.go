@@ -72,7 +72,7 @@ func (a *App) monitorOnce() {
 	now := time.Now()
 
 	for _, arr := range arrays {
-		metrics, err := a.thresholdsFor(arr.Vendor)
+		metrics, err := a.thresholdsFor(arr)
 		if err != nil {
 			continue
 		}

@@ -3,6 +3,7 @@ const state = {
   selectedId: null,
   hours: 24,
   arraysConfig: [],
+  switchesConfig: [],
   fleetSort: "severity", // "severity" | "name" — see renderFleetStrip
   mockData: false,
   retentionPeriod: "100y",
@@ -616,6 +617,85 @@ function renderConfigRows() {
   );
 }
 
+const SWITCH_PLATFORM_LABELS = { cisco_nxos: "Cisco NX-OS (NX-API)", arista_eos: "Arista EOS (eAPI)" };
+
+// Links are edited as one "array_id: port1, port2" per line rather than a
+// nested repeatable sub-form — a switch is usually linked to one or a
+// handful of arrays, and this keeps the card the same shape as everything
+// else in this Config tab.
+function linksToText(links) {
+  return (links || []).map((l) => `${l.array_id}: ${(l.ports || []).join(", ")}`).join("\n");
+}
+function linksFromText(text) {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [id, ports] = line.split(":");
+      return { array_id: (id || "").trim(), ports: (ports || "").split(",").map((p) => p.trim()).filter(Boolean) };
+    })
+    .filter((l) => l.array_id);
+}
+
+function switchCardHtml(s, i) {
+  return `<div class="config-card" data-index="${i}">
+    <div class="config-card-head">
+      <div class="config-card-id">
+        <input data-field="id" class="mono" placeholder="switch-id" value="${s.id || ""}" style="background:transparent;border:none;color:var(--text);font-weight:600;font-size:13.5px;width:auto;min-width:80px;padding:0;">
+        <select data-field="platform">
+          ${Object.entries(SWITCH_PLATFORM_LABELS).map(([v, label]) => `<option value="${v}" ${v === (s.platform || "cisco_nxos") ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </div>
+      <button class="btn btn-remove" data-remove-switch="${i}">Remove</button>
+    </div>
+    <div class="config-grid">
+      ${textField("Display name", "name", s.name)}
+      ${textField("Management address", "management_address", s.management_address, "switch.mgmt.example.internal")}
+      ${textField("Username", "username", s.username)}
+      ${textField("Password env var", "password_env", s.password_env, "SWITCH_PASSWORD_...")}
+      ${field(
+        "Verify TLS certificate",
+        `<label class="inline-checkbox"><input type="checkbox" data-field="use_insecure_tls_inverse" ${s.use_insecure_tls ? "" : "checked"}> <span>Off by default — most switch management APIs ship a self-signed cert</span></label>`,
+        "span-2"
+      )}
+      ${field(
+        "Linked array ports",
+        `<textarea data-field="links" rows="2" placeholder="fa-prod-east-01: Eth1/1, Eth1/2" style="width:100%;resize:vertical;">${linksToText(s.links)}</textarea>`,
+        "span-2"
+      )}
+    </div>
+  </div>`;
+}
+
+function readSwitchConfigRows() {
+  return Array.from(document.querySelectorAll("#switch-config-rows .config-card")).map((row) => {
+    const get = (f) => row.querySelector(`[data-field="${f}"]`)?.value.trim() || "";
+    return {
+      id: get("id"),
+      name: get("name"),
+      platform: row.querySelector('[data-field="platform"]')?.value || "cisco_nxos",
+      management_address: get("management_address"),
+      username: get("username"),
+      password_env: get("password_env") || undefined,
+      use_insecure_tls: !row.querySelector('[data-field="use_insecure_tls_inverse"]')?.checked,
+      links: linksFromText(row.querySelector('[data-field="links"]')?.value || ""),
+    };
+  });
+}
+
+function renderSwitchConfigRows() {
+  document.getElementById("switch-config-rows").innerHTML =
+    state.switchesConfig.map(switchCardHtml).join("") ||
+    '<div class="empty-note">No switches configured — this is optional, only needed to cite real port evidence in the front-end/back-end correlation finding.</div>';
+  document.querySelectorAll("[data-remove-switch]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      state.switchesConfig.splice(Number(btn.dataset.removeSwitch), 1);
+      renderSwitchConfigRows();
+    })
+  );
+}
+
 function formatBytes(n) {
   if (n === null || n === undefined) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -629,9 +709,15 @@ function formatBytes(n) {
 }
 
 async function loadConfigView() {
-  const [arraysData, settings] = await Promise.all([api("/api/config/arrays"), api("/api/config/settings")]);
+  const [arraysData, settings, switchesData] = await Promise.all([
+    api("/api/config/arrays"),
+    api("/api/config/settings"),
+    api("/api/config/switches"),
+  ]);
   state.arraysConfig = arraysData.arrays || [];
   renderConfigRows();
+  state.switchesConfig = switchesData.switches || [];
+  renderSwitchConfigRows();
   state.mockData = !!settings.mock_data;
   document.getElementById("mock-data-toggle").checked = state.mockData;
 
@@ -940,6 +1026,28 @@ document.getElementById("save-arrays").addEventListener("click", async () => {
     });
     status.textContent = `Saved ${res.saved} array(s) — scrape targets regenerated.`;
     state.selectedId = null;
+    await loadFleet();
+    await renderFleetView();
+  } catch (e) {
+    status.textContent = `Save failed: ${e.message}`;
+  }
+});
+
+document.getElementById("add-switch").addEventListener("click", () => {
+  state.switchesConfig.push({ id: "", name: "", platform: "cisco_nxos", management_address: "", links: [] });
+  renderSwitchConfigRows();
+});
+
+document.getElementById("save-switches").addEventListener("click", async () => {
+  const status = document.getElementById("switch-config-status");
+  try {
+    const switches = readSwitchConfigRows();
+    const res = await api("/api/config/switches", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ switches }),
+    });
+    status.textContent = `Saved ${res.saved} switch(es) — scrape targets regenerated.`;
     await loadFleet();
     await renderFleetView();
   } catch (e) {

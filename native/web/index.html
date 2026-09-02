@@ -213,6 +213,17 @@
     </div>
 
     <div class="section-head">
+      <div class="section-title">Switch Path Telemetry</div>
+      <div class="section-note">Link a switch's uplink ports to the array(s) they carry traffic for — edits write to config/switches.yml. Linked ports feed the array's Front-End panels and let the "bottleneck is likely upstream" finding cite actual port evidence instead of only inferring it.</div>
+    </div>
+    <div id="switch-config-rows"></div>
+    <div style="margin-top:14px; display:flex; align-items:center; gap:10px;">
+      <button class="btn" id="add-switch">+ Add switch</button>
+      <button class="btn btn-primary" id="save-switches">Save changes</button>
+      <span id="switch-config-status" class="section-note"></span>
+    </div>
+
+    <div class="section-head">
       <div class="section-title">Metrics Discovery</div>
       <div class="section-note">Dumps every counter a system's own API can report — not just what Plumb currently evaluates — as a text file, for finding what else could be added</div>
     </div>

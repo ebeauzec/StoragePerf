@@ -398,19 +398,70 @@ func BuildFindings(arrayID string, metrics []config.MetricDef, panels []Panel) (
 				worst = Critical
 			}
 		}
+
+		// If this array has a linked switch (config/switches.yml), its
+		// port panels are ordinary frontend-category panels by now — look
+		// for them and, when they're elevated, cite the actual reading
+		// instead of only inferring an upstream cause by elimination.
+		var switchUtil, switchErrors *Panel
+		for i := range panels {
+			switch panels[i].ID {
+			case "switch_port_utilization":
+				switchUtil = &panels[i]
+			case "switch_port_errors":
+				switchErrors = &panels[i]
+			}
+		}
+
+		var citations []string
+		switchConfigured := switchUtil != nil || switchErrors != nil
+		switchElevated := false
+		for _, p := range []*Panel{switchUtil, switchErrors} {
+			if p == nil || p.Severity == Good || p.Value == nil {
+				continue
+			}
+			switchElevated = true
+			if severityRank(p.Severity) > severityRank(worst) {
+				worst = p.Severity
+			}
+			switch p.ID {
+			case "switch_port_utilization":
+				citations = append(citations, fmt.Sprintf("the linked uplink port(s) are at %.0f%% utilization", *p.Value))
+			case "switch_port_errors":
+				citations = append(citations, fmt.Sprintf("the linked uplink port(s) are logging %.1f errors/min", *p.Value))
+			}
+		}
+
+		body := "Front-end metrics are degraded while every back-end signal this vendor publishes is within range. " +
+			"That points to the network/fabric path as the likely cause rather than the array's internal components."
+		investigate := []string{
+			"Check switch/fabric port counters (CRC errors, discards, link resets) on the paths between hosts and this array over the same window.",
+			"Confirm host HBA/NIC driver and firmware versions, and multipath (MPIO) failover state — a path flapping in and out looks like latency at the array.",
+			"Compare front-end latency against SAN/network device queue depth, buffer-credit exhaustion (FC), or NIC ring-buffer drops (iSCSI/NFS), if your fabric monitoring exposes them.",
+			"Correlate the timing of the front-end degradation against any recent zoning, switch firmware, or network maintenance changes.",
+		}
+		if switchElevated {
+			body = fmt.Sprintf(
+				"Front-end metrics are degraded, every back-end signal this vendor publishes is within range, and the "+
+					"switch path Plumb is monitoring for this array confirms it: %s. This points at the network/fabric "+
+					"path, not the array's internal components.",
+				strings.Join(citations, ", and "),
+			)
+			investigate = append([]string{
+				"Go straight to the linked switch's per-port counters (config/switches.yml) — the elevated port(s) are already identified, so this narrows to which host(s) or path segment share that link.",
+			}, investigate[1:]...)
+		} else if switchConfigured {
+			body += " The switch port(s) linked to this array's path are within range too, which narrows the cause " +
+				"further but doesn't rule out a transient or intermittent link issue outside this window."
+		}
+
 		findings = append([]Finding{{
-			Severity: worst,
-			Tag:      "fleet",
-			Title:    "Bottleneck is likely upstream of the array",
-			Body: "Front-end metrics are degraded while every back-end signal this vendor publishes is within range. " +
-				"That points to the network/fabric path as the likely cause rather than the array's internal components.",
-			Ref: fmt.Sprintf("%s · derived from front-end + back-end panels", arrayID),
-			Investigate: []string{
-				"Check switch/fabric port counters (CRC errors, discards, link resets) on the paths between hosts and this array over the same window.",
-				"Confirm host HBA/NIC driver and firmware versions, and multipath (MPIO) failover state — a path flapping in and out looks like latency at the array.",
-				"Compare front-end latency against SAN/network device queue depth, buffer-credit exhaustion (FC), or NIC ring-buffer drops (iSCSI/NFS), if your fabric monitoring exposes them.",
-				"Correlate the timing of the front-end degradation against any recent zoning, switch firmware, or network maintenance changes.",
-			},
+			Severity:    worst,
+			Tag:         "fleet",
+			Title:       "Bottleneck is likely upstream of the array",
+			Body:        body,
+			Ref:         fmt.Sprintf("%s · derived from front-end + back-end panels", arrayID),
+			Investigate: investigate,
 			Remediate: []string{
 				"Engage the network/SAN team first — this is very likely their path, not an array-side fix.",
 				"If a specific fabric link or interface is implicated, reseat/replace the SFP or cable and re-test.",

@@ -249,7 +249,7 @@ func (a *App) handleSuggestedThresholds(w http.ResponseWriter, r *http.Request) 
 		httpError(w, 404, fmt.Errorf("unknown array %q", id))
 		return
 	}
-	metrics, err := a.thresholdsFor(arr.Vendor)
+	metrics, err := a.thresholdsFor(arr)
 	if err != nil {
 		httpError(w, 500, err)
 		return

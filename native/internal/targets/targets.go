@@ -1,5 +1,5 @@
 // Package targets writes the Prometheus file_sd JSON that tells the bundled
-// Prometheus what to scrape. Two kinds of target exist side by side:
+// Prometheus what to scrape. Three kinds of target exist side by side:
 //   - Pure arrays: scraped through Plumb's own /scrape/{id} proxy, which
 //     holds the per-array bearer token so Prometheus itself never needs it.
 //   - NetApp arrays with credentials configured (ManagementLIF set):
@@ -11,6 +11,10 @@
 //     existing Harvest deployment, or StorageGRID's own embedded
 //     Prometheus federated some other way), and it's also what the demo
 //     fleet uses to show NetApp data without a real cluster.
+//   - Any array (any vendor) with at least one config/switches.yml link:
+//     one extra target at /scrape/switch/{id}, same `array` label as the
+//     array's own target so VictoriaMetrics accumulates switch_port_* and
+//     the array's own metrics under one identity — see internal/switchnative.
 package targets
 
 import (
@@ -26,9 +30,10 @@ type target struct {
 	Labels  map[string]string `json:"labels"`
 }
 
-// Generate writes one file_sd target per array. selfAddr is this process's
-// own host:port (for the Pure and NetApp scrape-proxy paths).
-func Generate(path string, arrays []config.Array, selfAddr string) (int, error) {
+// Generate writes one file_sd target per array (plus one more per array
+// with a linked switch). selfAddr is this process's own host:port (for
+// the Pure, NetApp, and switch scrape-proxy paths).
+func Generate(path string, arrays []config.Array, switches []config.Switch, selfAddr string) (int, error) {
 	var out []target
 	for _, a := range arrays {
 		labels := map[string]string{"array": a.ID, "model": a.Model, "vendor": a.Vendor}
@@ -44,6 +49,13 @@ func Generate(path string, arrays []config.Array, selfAddr string) (int, error) 
 		} else {
 			labels["__metrics_path__"] = "/scrape/" + a.ID
 			out = append(out, target{Targets: []string{selfAddr}, Labels: labels})
+		}
+
+		if len(config.LinksForArray(switches, a.ID)) > 0 {
+			out = append(out, target{
+				Targets: []string{selfAddr},
+				Labels:  map[string]string{"array": a.ID, "model": a.Model, "vendor": a.Vendor, "__metrics_path__": "/scrape/switch/" + a.ID},
+			})
 		}
 	}
 

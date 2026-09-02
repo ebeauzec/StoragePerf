@@ -1,0 +1,53 @@
+# Plumb — switch uplink port thresholds
+#
+# Not a vendor file in the usual sense — these two metrics get appended to
+# whichever array's own vendor thresholds (netapp_ontap.yml, pure_flasharray.yml,
+# etc.) when config/switches.yml links a switch's ports to that array. See
+# internal/switchnative for how the values themselves are collected (Cisco
+# NX-API / Arista eAPI, directly from the switch, no cloud dependency) and
+# internal/rules.go's correlation-finding code for how an elevated reading
+# here upgrades the front-end/back-end "bottleneck is likely upstream"
+# finding from an inference to a cited claim.
+#
+# Both metrics are tagged category: frontend — a switch uplink genuinely is
+# part of the SAN/host path Plumb's own Front-End column already represents,
+# not a new category.
+
+metrics:
+  - id: switch_port_utilization
+    category: frontend
+    label: "Switch Port Utilization"
+    unit: "%"
+    query: 'switch_port_utilization{array="{array}"}'
+    comparison: gt
+    severity_watch: 70
+    severity_critical: 90
+    threshold_label: "< 70% sustained — general link-saturation convention"
+    finding:
+      watch: "The uplink port(s) feeding this array are at {value:.0f}% utilization, above the {threshold:.0f}% guidance."
+      critical: "The uplink port(s) feeding this array are at {value:.0f}% utilization — the link itself is a likely bottleneck, not just the path to it."
+    investigate:
+      - "Check which of this array's linked ports (config/switches.yml) is the busy one — a single saturated uplink among several looks different from every link being loaded evenly."
+      - "Check whether the load is steady or bursty — a port pegged at high utilization only during a backup/replication window points at scheduling, not a capacity shortfall."
+    remediate:
+      - "Add a second uplink (or move to a higher-speed port) if this array's traffic has genuinely outgrown its current link."
+      - "Reschedule or throttle whatever's driving the burst if the saturation is periodic rather than constant."
+
+  - id: switch_port_errors
+    category: frontend
+    label: "Switch Port Errors"
+    unit: "errors/min"
+    query: 'rate(switch_port_errors{array="{array}"}[5m]) * 60'
+    comparison: gt
+    severity_watch: 0.01
+    severity_critical: 5
+    threshold_label: "> 0 / min — any sustained rate is a physical-layer fault"
+    finding:
+      watch: "The uplink port(s) feeding this array are logging {value:.1f} errors/min, above the {threshold:.2f}/min guidance."
+      critical: "The uplink port(s) feeding this array are logging {value:.0f} errors/min — a physical-layer problem (cable, SFP, or a flapping link) is likely, not the array."
+    investigate:
+      - "Check the specific linked port(s) for CRC errors, discards, or link flaps on the switch itself — this rollup can't say which port without going to the switch's own interface counters directly."
+      - "Confirm whether the error rate correlates with the front-end latency degradation this array is showing — a coincidental unrelated fault is possible but less likely than a real correlation."
+    remediate:
+      - "Reseat or replace the SFP/transceiver and cable on the implicated port."
+      - "Fail over to a redundant path while the faulty link is repaired, if multipathing is configured."

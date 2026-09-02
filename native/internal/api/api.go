@@ -25,6 +25,7 @@ import (
 	"plumb/internal/rules"
 	"plumb/internal/scrapeproxy"
 	"plumb/internal/selfupdate"
+	"plumb/internal/switchnative"
 	"plumb/internal/targets"
 	"plumb/internal/updates"
 	"plumb/internal/vm"
@@ -164,6 +165,19 @@ func (a *App) activeArray(id string) (config.Array, bool, error) {
 	return config.Array{}, false, nil
 }
 
+// activeSwitches mirrors activeArrays: the one demo switch (linked to
+// mock-fa-prod-east-01, see mockbackend/switchnative.go) while mock mode
+// is on, or the real config/switches.yml otherwise. There's no real
+// physical switch to demo-link in a synthetic fleet, so unlike arrays
+// (which have a full mock roster) this is always exactly zero or one
+// entry in mock mode.
+func (a *App) activeSwitches() ([]config.Switch, error) {
+	if a.mockEnabled() && a.MockBackend != nil {
+		return a.MockBackend.Switches(), nil
+	}
+	return config.LoadSwitches(a.ConfigDir)
+}
+
 // EnsureMockBackend starts the mock backend if settings.yml already had
 // mock_data:true when this process booted — called once at startup, after
 // LoadSettings, since collection needs to be wired up before the first
@@ -180,7 +194,11 @@ func (a *App) regenerate() error {
 	if err != nil {
 		return err
 	}
-	if _, err := targets.Generate(a.TargetsPath, arrays, a.SelfAddr); err != nil {
+	switches, err := a.activeSwitches()
+	if err != nil {
+		return err
+	}
+	if _, err := targets.Generate(a.TargetsPath, arrays, switches, a.SelfAddr); err != nil {
 		return err
 	}
 	return nil
@@ -222,6 +240,24 @@ func (a *App) handleScrapeNetApp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleScrapeSwitch is Prometheus's scrape target for switch_port_utilization/
+// switch_port_errors, one per array that has at least one config/switches.yml
+// link (see targets.Generate) — vendor-agnostic, unlike handleScrapeNetApp,
+// since a switch link is orthogonal to which array vendor it's feeding.
+func (a *App) handleScrapeSwitch(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	switches, err := a.activeSwitches()
+	if err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	links := config.LinksForArray(switches, id)
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	if err := switchnative.WriteMetrics(w, id, links); err != nil {
+		httpError(w, 502, err)
+	}
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
@@ -231,8 +267,31 @@ func httpError(w http.ResponseWriter, status int, err error) {
 	http.Error(w, err.Error(), status)
 }
 
-func (a *App) thresholdsFor(vendor string) ([]config.MetricDef, error) {
-	return config.LoadThresholds(a.ConfigDir, vendor)
+// thresholdsFor returns the metrics to evaluate for one array: its own
+// vendor's thresholds, plus — if config/switches.yml links a switch's
+// ports to this array — the two switch_uplink.yml metrics appended on top.
+// Appending them here, once, is what lets every existing caller (fleet,
+// array detail, exports, reports, the monitor loop) pick up switch
+// evidence for free, and what lets internal/rules.go's correlation finding
+// find a switch_port_* panel just by looking at the same panels list
+// everything else already has, no separate code path needed.
+func (a *App) thresholdsFor(arr config.Array) ([]config.MetricDef, error) {
+	metrics, err := config.LoadThresholds(a.ConfigDir, arr.Vendor)
+	if err != nil {
+		return nil, err
+	}
+	switches, err := a.activeSwitches()
+	if err != nil {
+		return nil, err
+	}
+	if len(config.LinksForArray(switches, arr.ID)) == 0 {
+		return metrics, nil
+	}
+	switchMetrics, err := config.LoadThresholds(a.ConfigDir, "switch_uplink")
+	if err != nil {
+		return nil, err
+	}
+	return append(metrics, switchMetrics...), nil
 }
 
 func parseHours(r *http.Request, def float64) time.Duration {
@@ -312,7 +371,7 @@ func (a *App) handleFleet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, arr := range arrays {
-		metrics, err := a.thresholdsFor(arr.Vendor)
+		metrics, err := a.thresholdsFor(arr)
 		if err != nil {
 			out = append(out, fleetEntry{ID: arr.ID, Name: arr.Name, Model: arr.Model, Vendor: arr.Vendor, Health: rules.Unknown, Sparkline: [][2]float64{}})
 			continue
@@ -340,7 +399,7 @@ func (a *App) handleArrayDetail(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 404, fmt.Errorf("unknown array %q", id))
 		return
 	}
-	metrics, err := a.thresholdsFor(arr.Vendor)
+	metrics, err := a.thresholdsFor(arr)
 	if err != nil {
 		httpError(w, 500, err)
 		return
@@ -379,6 +438,34 @@ func (a *App) handlePutArraysConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"saved": len(payload.Arrays)})
+}
+
+func (a *App) handleGetSwitchesConfig(w http.ResponseWriter, r *http.Request) {
+	switches, err := config.LoadSwitches(a.ConfigDir)
+	if err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"switches": switches})
+}
+
+func (a *App) handlePutSwitchesConfig(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		Switches []config.Switch `json:"switches"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		httpError(w, 400, err)
+		return
+	}
+	if err := config.SaveSwitches(a.ConfigDir, payload.Switches); err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	if err := a.regenerate(); err != nil {
+		httpError(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"saved": len(payload.Switches)})
 }
 
 // dirSize sums file sizes under path. Errors on individual entries are
@@ -564,7 +651,7 @@ func (a *App) handleExport(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 404, fmt.Errorf("unknown array %q", id))
 		return
 	}
-	metrics, err := a.thresholdsFor(arr.Vendor)
+	metrics, err := a.thresholdsFor(arr)
 	if err != nil {
 		httpError(w, 500, err)
 		return
@@ -638,7 +725,7 @@ func (a *App) buildArrayReport(id string, window time.Duration) (report.ArrayRep
 	if !ok {
 		return report.ArrayReport{}, fmt.Errorf("unknown array %q", id)
 	}
-	metrics, err := a.thresholdsFor(arr.Vendor)
+	metrics, err := a.thresholdsFor(arr)
 	if err != nil {
 		return report.ArrayReport{}, err
 	}
@@ -699,10 +786,13 @@ func (a *App) Routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /scrape/{id}", scrapeproxy.Handler(a.activeArray))
 	mux.HandleFunc("GET /scrape/netapp/{id}", a.handleScrapeNetApp)
+	mux.HandleFunc("GET /scrape/switch/{id}", a.handleScrapeSwitch)
 	mux.HandleFunc("GET /api/fleet", a.handleFleet)
 	mux.HandleFunc("GET /api/arrays/{id}", a.handleArrayDetail)
 	mux.HandleFunc("GET /api/config/arrays", a.handleGetArraysConfig)
 	mux.HandleFunc("PUT /api/config/arrays", a.handlePutArraysConfig)
+	mux.HandleFunc("GET /api/config/switches", a.handleGetSwitchesConfig)
+	mux.HandleFunc("PUT /api/config/switches", a.handlePutSwitchesConfig)
 	mux.HandleFunc("GET /api/config/settings", a.handleGetSettings)
 	mux.HandleFunc("PUT /api/config/settings", a.handlePutSettings)
 	mux.HandleFunc("GET /api/version", a.handleVersion)

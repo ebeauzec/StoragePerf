@@ -36,9 +36,10 @@ const basePort = 19601 // arbitrary, high, unlikely to collide with anything rea
 // mux, once, at startup — they're inert (never scraped) unless targets.go
 // actually points at them, so there's nothing to start/stop for Pure.
 type Backend struct {
-	mu        sync.Mutex
-	cancel    context.CancelFunc
-	listeners map[string]string // array ID -> "127.0.0.1:port", while running
+	mu           sync.Mutex
+	cancel       context.CancelFunc
+	listeners    map[string]string // array ID -> "127.0.0.1:port", while running
+	switchListen string            // "127.0.0.1:port" for the one demo switch (see switchnative.go), empty while stopped
 }
 
 func New() *Backend {
@@ -109,9 +110,30 @@ func (b *Backend) Start() error {
 		port++
 	}
 
+	switchAddr := fmt.Sprintf("127.0.0.1:%d", port)
+	switchLn, err := net.Listen("tcp", switchAddr)
+	if err != nil {
+		cancel()
+		return fmt.Errorf("starting mock switch backend on %s: %w", switchAddr, err)
+	}
+	switchTLSLn := tls.NewListener(switchLn, &tls.Config{Certificates: []tls.Certificate{cert}})
+	switchSrv := &http.Server{Handler: nexusMux()}
+	go func() {
+		if err := switchSrv.Serve(switchTLSLn); err != nil && err != http.ErrServerClosed {
+			log.Printf("[mockbackend] switch listener stopped: %v", err)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		switchSrv.Shutdown(shutdownCtx)
+	}()
+
 	b.cancel = cancel
 	b.listeners = listeners
-	log.Printf("[mockbackend] started %d NetApp mock listener(s)", len(listeners))
+	b.switchListen = switchAddr
+	log.Printf("[mockbackend] started %d NetApp mock listener(s) + 1 switch listener", len(listeners))
 	return nil
 }
 
@@ -125,6 +147,7 @@ func (b *Backend) Stop() {
 	b.cancel()
 	b.cancel = nil
 	b.listeners = nil
+	b.switchListen = ""
 	log.Printf("[mockbackend] stopped")
 }
 
@@ -155,4 +178,27 @@ func (b *Backend) Arrays(selfAddr string) []config.Array {
 		out = append(out, PureArrayConfig(selfAddr, arr))
 	}
 	return out
+}
+
+// Switches returns the one demo switch (see switchnative.go) as a real
+// config.Switch, linked to mock-fa-prod-east-01 on its single mock port —
+// empty if the switch listener isn't up (mock mode off, or mid-start).
+func (b *Backend) Switches() []config.Switch {
+	b.mu.Lock()
+	addr := b.switchListen
+	b.mu.Unlock()
+	if addr == "" {
+		return nil
+	}
+	return []config.Switch{{
+		ID:                "mock-switch-01",
+		Name:              "leaf-switch-01",
+		Platform:          config.SwitchPlatformCiscoNXOS,
+		ManagementAddress: addr,
+		Username:          "mock",
+		UseInsecureTLS:    true,
+		Links: []config.SwitchLink{
+			{ArrayID: mockSwitchArrayID, Ports: []string{mockSwitchPort}},
+		},
+	}}
 }

@@ -85,6 +85,104 @@ func SaveArrays(configDir string, arrays []Array) error {
 	return os.WriteFile(arraysPath(configDir), b, 0o644)
 }
 
+// Switch is a network switch whose uplink ports carry traffic for one or
+// more monitored arrays' front-end (host/SAN) path. This is what lets
+// Plumb's front-end/back-end correlation finding (internal/rules.go) cite
+// real port evidence instead of only inferring "probably the network" by
+// elimination — see SwitchLink's own doc comment for why the port mapping,
+// not the collector API itself, is the actual design center of this.
+//
+// Platform selects which management API this switch's own credentials are
+// handed to: "cisco_nxos" (NX-API, JSON-RPC over HTTPS) or "arista_eos"
+// (eAPI, same JSON-RPC shape) — see internal/switchnative. Both are local
+// management-plane calls to hardware the customer already owns, same trust
+// model as every other collector in this project.
+type Switch struct {
+	ID                string       `yaml:"id" json:"id"`
+	Name              string       `yaml:"name" json:"name"`
+	Platform          string       `yaml:"platform" json:"platform"` // "cisco_nxos" | "arista_eos"
+	ManagementAddress string       `yaml:"management_address" json:"management_address"`
+	Username          string       `yaml:"username" json:"username"`
+	PasswordEnv       string       `yaml:"password_env,omitempty" json:"password_env,omitempty"`
+	UseInsecureTLS    bool         `yaml:"use_insecure_tls,omitempty" json:"use_insecure_tls,omitempty"`
+	Links             []SwitchLink `yaml:"links" json:"links"`
+}
+
+const (
+	SwitchPlatformCiscoNXOS = "cisco_nxos"
+	SwitchPlatformAristaEOS = "arista_eos"
+)
+
+// SwitchLink says which of this switch's ports carry traffic for one
+// specific array. A switch can link multiple arrays (different port
+// groups), and — less commonly, e.g. a dual-homed host path — an array
+// could in principle be linked from more than one switch; this is why the
+// mapping lives on the switch (one YAML file, one place an operator who
+// knows the physical wiring edits it) rather than duplicated per-array.
+// Without this mapping a switch's telemetry has no way to be attributed to
+// a specific array's own correlation finding, which is the actual reason
+// this type exists at all, not just to model the collector API.
+type SwitchLink struct {
+	ArrayID string   `yaml:"array_id" json:"array_id"`
+	Ports   []string `yaml:"ports" json:"ports"`
+}
+
+type switchesFile struct {
+	Switches []Switch `yaml:"switches"`
+}
+
+func switchesPath(configDir string) string { return filepath.Join(configDir, "switches.yml") }
+
+func LoadSwitches(configDir string) ([]Switch, error) {
+	b, err := os.ReadFile(switchesPath(configDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var f switchesFile
+	if err := yaml.Unmarshal(b, &f); err != nil {
+		return nil, fmt.Errorf("parsing switches.yml: %w", err)
+	}
+	return f.Switches, nil
+}
+
+func SaveSwitches(configDir string, switches []Switch) error {
+	b, err := yaml.Marshal(switchesFile{Switches: switches})
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(switchesPath(configDir), b, 0o644)
+}
+
+// ArrayLink pairs a Switch with just the ports of it that are linked to one
+// particular array — what LinksForArray returns, and all a caller scraping
+// one array's switch metrics needs (it doesn't care about that switch's
+// other links to other arrays).
+type ArrayLink struct {
+	Switch Switch
+	Ports  []string
+}
+
+// LinksForArray returns every port, across every configured switch, linked
+// to the given array — almost always zero or one switch's worth, but a
+// dual-homed array's ports could span two.
+func LinksForArray(switches []Switch, arrayID string) []ArrayLink {
+	var out []ArrayLink
+	for _, sw := range switches {
+		for _, link := range sw.Links {
+			if link.ArrayID == arrayID && len(link.Ports) > 0 {
+				out = append(out, ArrayLink{Switch: sw, Ports: link.Ports})
+			}
+		}
+	}
+	return out
+}
+
 func GetArray(configDir, id string) (Array, bool, error) {
 	arrays, err := LoadArrays(configDir)
 	if err != nil {
