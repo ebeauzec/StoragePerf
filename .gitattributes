@@ -1,0 +1,18 @@
+# Unix shell scripts must always check out with LF, regardless of the
+# checking-out machine's own core.autocrlf setting. Without this, a
+# Windows dev machine with autocrlf=true silently converts run.sh to
+# CRLF on checkout -- which breaks the script's own shebang line on a
+# real Mac/Linux machine ("env: bash\r: No such file or directory",
+# meaning the script never runs at all). Confirmed live: this exact
+# corruption happened on this repo's Windows checkout (2026-09-03) and,
+# since this repo commonly lives in a cloud-synced folder mirrored
+# across machines rather than checked out fresh via git on each one,
+# propagated as raw bytes to a real Mac where the same run.sh failed.
+*.sh text eol=lf
+*.py text eol=lf
+
+# Windows batch/PowerShell files need the opposite -- see CLAUDE.md's
+# note on cmd.exe misparsing a bare-LF .bat file in combination with a
+# non-ASCII byte.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
