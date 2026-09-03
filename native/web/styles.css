@@ -86,7 +86,13 @@ a{color:inherit;}
   box-shadow:0 0 0 1px rgba(69,208,196,0.25) inset;
 }
 .fleet-card-top{display:flex; align-items:flex-start; justify-content:space-between; gap:8px;}
-.fleet-name{font-weight:600; font-size:13.5px;}
+/* Flex items default to min-width:auto, refusing to shrink below their own
+   content's natural width — for a long array name that natural width can
+   exceed the space left after the status chip, pushing the chip past the
+   card's own edge where the next card (painting later in DOM order) visually
+   clips it. min-width:0 lets this column actually shrink/wrap to fit. */
+.fleet-card-top > div:first-child{min-width:0;}
+.fleet-name{font-weight:600; font-size:13.5px; overflow-wrap:break-word;}
 .fleet-model{color:var(--text-dim); font-size:11px; margin-top:1px;}
 .chip{ font-size:10px; font-weight:600; letter-spacing:0.03em; text-transform:uppercase; padding:2.5px 7px; border-radius:20px; white-space:nowrap; flex:none; }
 .chip-good{color:var(--good); background:rgba(62,203,122,0.12);}
