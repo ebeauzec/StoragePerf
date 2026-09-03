@@ -6,7 +6,8 @@
 # Run scripts/fetch-sidecars.sh first — this script packages what's already
 # staged under sidecars/, it doesn't download anything itself.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
 DIST=dist
 rm -rf "$DIST"
@@ -35,6 +36,22 @@ for row in "${TARGETS[@]}"; do
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
     -o "$outdir/plumb${exe}" ./cmd/plumb
+
+  # go build normally sets the executable bit on its own output -- this is
+  # only needed because this script has been run from Git Bash on Windows
+  # against a Drive-synced checkout, where that NTFS/MSYS permission
+  # emulation is unreliable (see CLAUDE.md's note on this same checkout's
+  # executable bit not sticking for tracked .sh files -- this is the same
+  # class of problem, just hitting a freshly-built binary instead of a
+  # git-tracked script). Confirmed live: v0.13.0-v0.16.0's darwin/linux
+  # tarballs all shipped `plumb` as non-executable (644) while start.sh
+  # (which already had its own explicit chmod below) was fine at 755 --
+  # this is exactly why run.sh failed on a real Mac with no useful error,
+  # since `exec ./plumb` inside start.sh hit a silent Permission Denied.
+  # No-op on a real Unix build machine where go build already got it right.
+  if [ "$os" != "windows" ]; then
+    chmod +x "$outdir/plumb${exe}"
+  fi
 
   if [ -d "sidecars/${platform}" ]; then
     cp -R "sidecars/${platform}" "$outdir/sidecars"
@@ -108,6 +125,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 if command -v xattr >/dev/null 2>&1; then
   xattr -dr com.apple.quarantine . 2>/dev/null || true
 fi
+# Defense in depth, not the fix itself (see build-native.sh's own comment
+# on why plumb sometimes ships without its executable bit set) -- cheap
+# insurance so a build-machine permission quirk can never again turn into
+# a silent "Permission denied" on exec below with no useful error shown.
+chmod +x ./plumb 2>/dev/null || true
 # exec, not a plain call: this replaces the shell with plumb (same PID)
 # instead of running it as a child — otherwise killing/Ctrl+C-ing this
 # script leaves plumb (and its own sidecar children) running as orphans.
@@ -141,7 +163,16 @@ EOF
         powershell.exe -NoProfile -Command "Compress-Archive -Path '${win_src}' -DestinationPath '${win_dest}' -Force"
       fi
     else
-      tar -czf "plumb-${VERSION}-${platform}.tar.gz" "plumb-${VERSION}-${platform}"
+      # Not a plain `tar -czf`: see make-tar.py's own doc comment for why
+      # -- chmod is a confirmed no-op on this Windows/Drive-synced
+      # checkout, so a shell tar here would silently archive `plumb` as
+      # non-executable regardless of the chmod calls above (which do
+      # nothing real for tar/ls to pick up either). This sets each entry's
+      # mode explicitly, independent of the host filesystem.
+      python3 "$SCRIPT_DIR/make-tar.py" \
+        "plumb-${VERSION}-${platform}" \
+        "plumb-${VERSION}-${platform}.tar.gz" \
+        "plumb-${VERSION}-${platform}"
     fi
   )
   echo "  -> $DIST/plumb-${VERSION}-${platform}.${archive_ext}"

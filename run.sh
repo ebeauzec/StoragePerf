@@ -41,14 +41,24 @@ esac
 platform="${platform_os}_${platform_arch}"
 
 echo "==> Checking the latest release for $platform"
-api_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")
+# curl's own failure (rate-limited, offline, GitHub down) is handled
+# explicitly here rather than left to `set -e`: under errexit, a plain
+# `var=$(failing_command)` assignment still aborts the script immediately
+# on that command's nonzero exit, but with only curl's own terse message
+# ("curl: (22) The requested URL returned error: 403") and none of the
+# context below -- indistinguishable from the script silently doing
+# nothing. The `|| true` catches that and routes it through the same
+# clear message the empty-tag/asset_url case already had.
+api_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest") || api_json=""
 tag=$(printf '%s' "$api_json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
 asset_url=$(printf '%s' "$api_json" \
   | grep -o "\"browser_download_url\": *\"[^\"]*plumb-[^\"]*-${platform}\.tar\.gz\"" \
   | sed -E 's/.*"(https:[^"]+)"/\1/' | head -1)
 
 if [ -z "$tag" ] || [ -z "$asset_url" ]; then
-  echo "Couldn't find a $platform release asset automatically." >&2
+  echo "Couldn't reach GitHub or find a $platform release asset automatically." >&2
+  echo "(A common cause is GitHub's unauthenticated API rate limit -- 60 requests/hour" >&2
+  echo "per IP; wait a few minutes and try again if you've run this repeatedly.)" >&2
   echo "Download it manually from: https://github.com/$REPO/releases/latest" >&2
   exit 1
 fi
