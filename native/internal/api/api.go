@@ -320,8 +320,16 @@ func isLatencyPanel(id string) bool {
 // up a metric ID (volume_total_ops / s3_operations) that was never defined.
 func secondaryStat(id string) (ok bool, label, unit string) {
 	switch id {
-	case "host_queue_depth", "bucket_throughput":
+	case "host_queue_depth":
 		return true, "Queue", ""
+	case "bucket_throughput":
+		// Was grouped under "Queue" alongside host_queue_depth despite
+		// being a completely different kind of number (ops/sec, typically
+		// in the hundreds of thousands, vs. an actual outstanding-I/O
+		// depth in the tens/hundreds) -- confirmed live as a real,
+		// misleading label ("Queue 307,811") while auditing cross-vendor
+		// consistency (2026-09-03), not a deliberate choice to preserve.
+		return true, "Ops", ""
 	case "node_cpu_busy", "node_cpu":
 		return true, "CPU", "%"
 	case "eseries_capacity_used_percent":

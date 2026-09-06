@@ -203,16 +203,30 @@ func writeFlashBladeMetrics(w http.ResponseWriter, arr mockdata.Array) {
 	// bucket_throughput / bucket_throughput_read / bucket_throughput_write:
 	// real dimension values (reads_per_sec/writes_per_sec), independent
 	// wave functions per direction rather than one total split by a fixed
-	// ratio, so read and write can genuinely diverge in the demo.
-	readIOPS := arr.CurrentValue("bucket_throughput_read", arr.ID+"|bucket_throughput_read", "backend", 100000, 200000, now)
-	writeIOPS := arr.CurrentValue("bucket_throughput_write", arr.ID+"|bucket_throughput_write", "backend", 100000, 200000, now)
+	// ratio, so read and write can genuinely diverge in the demo. Category
+	// arg is "frontend" (not "backend"), matching these metrics' corrected
+	// category in config/thresholds/pure_flashblade.yml — they're
+	// client-facing numbers, same concept as FlashArray's host_iops/
+	// host_bandwidth.
+	readIOPS := arr.CurrentValue("bucket_throughput_read", arr.ID+"|bucket_throughput_read", "frontend", 100000, 200000, now)
+	writeIOPS := arr.CurrentValue("bucket_throughput_write", arr.ID+"|bucket_throughput_write", "frontend", 100000, 200000, now)
 	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="reads_per_sec"}`, readIOPS)
 	fprintGauge(w, "purefb_buckets_performance_throughput_iops", "FlashBlade buckets throughput in operations per second", `{name="media-archive",dimension="writes_per_sec"}`, writeIOPS)
 
-	// bucket_bandwidth_read / bucket_bandwidth_write: genuinely new metric,
-	// not previously emitted. Thresholds in MB/s -> emit bytes/sec.
-	readMBs := arr.CurrentValue("bucket_bandwidth_read", arr.ID+"|bucket_bandwidth_read", "backend", 1000, 2000, now)
-	writeMBs := arr.CurrentValue("bucket_bandwidth_write", arr.ID+"|bucket_bandwidth_write", "backend", 1000, 2000, now)
+	// bucket_bandwidth_read / bucket_bandwidth_write: same category
+	// correction as throughput above.
+	readMBs := arr.CurrentValue("bucket_bandwidth_read", arr.ID+"|bucket_bandwidth_read", "frontend", 1000, 2000, now)
+	writeMBs := arr.CurrentValue("bucket_bandwidth_write", arr.ID+"|bucket_bandwidth_write", "frontend", 1000, 2000, now)
 	fprintGauge(w, "purefb_buckets_performance_bandwidth_bytes", "FlashBlade buckets bandwidth in bytes per second", `{name="media-archive",dimension="read_bytes_per_sec"}`, readMBs*1000000)
 	fprintGauge(w, "purefb_buckets_performance_bandwidth_bytes", "FlashBlade buckets bandwidth in bytes per second", `{name="media-archive",dimension="write_bytes_per_sec"}`, writeMBs*1000000)
+
+	// blade_capacity: purefb_file_systems_space_bytes, total_physical as a
+	// percent of provisioned, summed across file systems — array-wide,
+	// same as every other vendor's capacity mock (one filesystem is enough
+	// to demonstrate it, matching how pool_saturation/aggr_capacity's own
+	// mocks work with a single synthetic pool/aggregate).
+	capPct := arr.CurrentValue("blade_capacity", arr.ID+"|blade_capacity", "backend", 75, 85, now)
+	const fsSize = 500_000_000_000.0 // 500GB, a round number for a readable mock response
+	fprintGauge(w, "purefb_file_systems_space_bytes", "FlashBlade file systems space in bytes", `{name="media-fs",space="provisioned"}`, fsSize)
+	fprintGauge(w, "purefb_file_systems_space_bytes", "FlashBlade file systems space in bytes", `{name="media-fs",space="total_physical"}`, fsSize*capPct/100)
 }

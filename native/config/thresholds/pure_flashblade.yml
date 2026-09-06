@@ -2,22 +2,28 @@
 #
 # ⚠ LESS VERIFIED THAN THE OTHER VENDOR FILES. Pure's own metrics spec for
 # FlashBlade (PureStorage-OpenConnect/pure-fb-openmetrics-exporter,
-# specification/metrics/purefb-metrics.md, checked August 2026) documents
+# specification/metrics/purefb-metrics.md, checked September 2026) documents
 # bucket- and file-system-level metrics in full, but marks several sections
-# — including `purefb_array` itself — as "TODO" / incomplete. There is no
-# confirmed array-wide latency rollup, no busy%/CPU metric, and no
-# confirmed network-error metric, the same gaps as FlashArray plus one
-# more: even the per-bucket space label values aren't fully published.
+# — including `purefb_array` itself — as "TODO" / incomplete. There is
+# still no confirmed array-wide latency rollup, no busy%/CPU metric, no
+# confirmed network-error metric, and no confirmed replication metric —
+# the same gaps as FlashArray plus one more: even the per-bucket space
+# label values aren't fully published (file-system-level space is,
+# though — see blade_capacity below, added once that was confirmed).
 #
-# What's below is deliberately minimal rather than padded with guesses:
-# two metrics I could verify with reasonable confidence from bucket-level
-# performance data. Verify and extend against your own array before relying
-# on this:
+# What's below is deliberately incomplete rather than padded with
+# guesses for the gaps above. Verify and extend against your own array
+# before relying on this:
 #
 #   curl -sk -H "Authorization: Bearer <token>" https://<array>/metrics | less
 #
-# and check FlashBlade's real space/capacity label names against what your
-# array actually reports before adding a capacity panel.
+# Every bucket_* metric here is category: frontend, matching
+# pure_flasharray.yml's host_iops/host_bandwidth — these are client-
+# facing numbers (how fast clients can read/write buckets), the same
+# concept "front-end" means everywhere else in this codebase, not an
+# array-internal one. They were miscategorized as backend until this was
+# audited for cross-vendor consistency (2026-09-03) — fixed here, not a
+# design choice to preserve.
 
 metrics:
   - id: bucket_latency
@@ -87,7 +93,7 @@ metrics:
       - "If broad and sustained, capture a support bundle and engage Pure support."
 
   - id: bucket_throughput
-    category: backend
+    category: frontend
     label: "Bucket Throughput"
     unit: ops
     # This is the SUM of bucket_throughput_read + bucket_throughput_write,
@@ -113,7 +119,7 @@ metrics:
       - "If unplanned, identify and, if necessary, throttle or reschedule the responsible workload."
 
   - id: bucket_throughput_read
-    category: backend
+    category: frontend
     label: "Bucket Throughput — Read"
     unit: ops
     query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension="reads_per_sec"})'
@@ -132,7 +138,7 @@ metrics:
       - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
 
   - id: bucket_throughput_write
-    category: backend
+    category: frontend
     label: "Bucket Throughput — Write"
     unit: ops
     query: 'sum(purefb_buckets_performance_throughput_iops{array="{array}",dimension="writes_per_sec"})'
@@ -151,7 +157,7 @@ metrics:
       - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
 
   - id: bucket_bandwidth_read
-    category: backend
+    category: frontend
     label: "Bucket Bandwidth — Read"
     unit: "MB/s"
     # purefb_buckets_performance_bandwidth_bytes{dimension} is real and
@@ -174,7 +180,7 @@ metrics:
       - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
 
   - id: bucket_bandwidth_write
-    category: backend
+    category: frontend
     label: "Bucket Bandwidth — Write"
     unit: "MB/s"
     query: 'sum(purefb_buckets_performance_bandwidth_bytes{array="{array}",dimension="write_bytes_per_sec"}) / 1000000'
@@ -191,3 +197,37 @@ metrics:
       - "Correlate against bucket_latency_write and bucket_throughput_write — a bandwidth spike with steady throughput suggests larger object sizes, not more requests."
     remediate:
       - "Replace the illustrative threshold in config/thresholds/pure_flashblade.yml with a value derived from this array's own observed normal range."
+
+  - id: blade_capacity
+    category: backend
+    label: "Capacity Utilization"
+    unit: "%"
+    # purefb_file_systems_space_bytes is real and confirmed (specification/
+    # metrics/purefb-metrics.md in PureStorage-OpenConnect/
+    # pure-fb-openmetrics-exporter, checked September 2026) — total_physical
+    # (bytes actually consumed) as a percent of provisioned (each file
+    # system's nominal size), summed across every file system on the
+    # blade. FlashBlade had no capacity panel at all before this — every
+    # other vendor in this codebase has one; this was the last gap.
+    # Scoped to file systems (NFS/SMB) specifically, not buckets: the
+    # per-bucket space label values aren't fully published per this
+    # file's own header comment, while file-system space is. A blade used
+    # purely for S3/object workloads with no file systems provisioned
+    # will show this panel as "no data" rather than a wrong number —
+    # sum() over an absent metric yields no series in PromQL, not zero.
+    query: 'sum(purefb_file_systems_space_bytes{array="{array}",space="total_physical"}) / sum(purefb_file_systems_space_bytes{array="{array}",space="provisioned"}) * 100'
+    comparison: gt
+    severity_watch: 75
+    severity_critical: 85
+    threshold_label: "< 75% — general storage capacity convention"
+    finding:
+      watch: "Capacity utilization is at {value:.0f}%, above the {threshold:.0f}% illustrative guidance."
+      critical: "Capacity utilization is at {value:.0f}% — capacity, not just performance, is now a near-term risk."
+    investigate:
+      - "Break down usage by file system to identify what's driving growth."
+      - "Check the blade's own data-reduction ratio (purefb_file_systems_space_data_reduction_ratio) for any recent regression."
+      - "Review snapshot retention on the affected file system(s) — accumulated snapshots are a common silent capacity driver."
+    remediate:
+      - "Reclaim space via expired-snapshot cleanup or reduced retention if snapshots are the driver."
+      - "Plan a capacity expansion (additional blade/chassis) if growth is workload-driven and expected to continue."
+      - "Migrate or archive cold data off the blade if a specific file system is responsible for the growth."

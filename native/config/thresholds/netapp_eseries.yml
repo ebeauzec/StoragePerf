@@ -71,6 +71,14 @@ metrics:
     category: backend
     label: "Capacity Utilization"
     unit: "%"
+    # No per-pool breakdown (unlike ONTAP's volume_space_used_percent or
+    # this file's own eseries_host_latency_by_volume) despite this
+    # metric's own investigate text below already asking "which pool" —
+    # looked into it (2026-09-03, cross-vendor uniformity audit): SANtricity's
+    # storagePoolSpaceInfo array (the source this collector already reads,
+    # see internal/netappnative/eseries.go's collectCapacity) doesn't have
+    # a confirmed pool-identifier field name to break down by. Left as a
+    # real, disclosed gap rather than guessed at.
     query: 'avg(eseries_capacity_used_percent{array="{array}"})'
     comparison: gt
     severity_watch: 75
