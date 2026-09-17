@@ -268,7 +268,22 @@ func main() {
 	go app.RunMonitor(5*time.Minute, stopMonitor)
 	defer close(stopMonitor)
 
-	srv := &http.Server{Addr: "0.0.0.0:" + listenPort, Handler: app.Routes()}
+	srv := &http.Server{
+		Addr:    "0.0.0.0:" + listenPort,
+		Handler: app.Routes(),
+		// ReadHeaderTimeout/IdleTimeout only, deliberately no
+		// ReadTimeout/WriteTimeout: this server also serves PDF/CSV
+		// report generation and fleet-wide data export, whose response
+		// time genuinely scales with how much history is requested — a
+		// blanket WriteTimeout would silently truncate a large legitimate
+		// export rather than protect against anything. Go's own default
+		// (unset = no timeout) leaves the header-read phase specifically
+		// exposed to a slow/incomplete client holding a connection open
+		// indefinitely before ever reaching a handler; these two close
+		// that gap without touching handler execution time at all.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

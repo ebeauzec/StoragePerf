@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"time"
 
@@ -72,93 +73,117 @@ func (a *App) monitorOnce() {
 	now := time.Now()
 
 	for _, arr := range arrays {
-		metrics, err := a.thresholdsFor(arr)
-		if err != nil {
-			continue
-		}
-		res, err := rules.EvaluateArray(a.VM, arr, metrics, time.Hour)
-		if err != nil {
-			log.Printf("[monitor] evaluating %s: %v", arr.ID, err)
-			continue
-		}
+		a.monitorOneArray(arr, windows, cfg, now)
+	}
+}
 
-		// EMS events are collected straight from the array, never through
-		// Prometheus/VictoriaMetrics — see internal/netappnative/ems.go's
-		// doc comment for why. ONTAP only; StorageGRID and Pure have no EMS
-		// equivalent Plumb collects today.
-		if a.Events != nil && arr.Vendor == config.VendorNetAppONTAP && a.ONTAP != nil {
-			if emsEvents, err := a.ONTAP.CollectEMSEvents(arr); err != nil {
-				log.Printf("[monitor] collecting EMS events for %s: %v", arr.ID, err)
-			} else if len(emsEvents) > 0 {
-				converted := make([]eventstore.Event, len(emsEvents))
-				for i, e := range emsEvents {
-					converted[i] = eventstore.Event{
-						ArrayID: e.ArrayID, ArrayName: e.ArrayName, Source: "ems", Key: e.DedupKey(),
-						Time: e.Time.Format(time.RFC3339), Severity: e.Severity, Name: e.Name, Node: e.Node, Message: e.Message,
-					}
+// monitorOneArray is monitorOnce's entire per-array body, isolated behind
+// its own recover() — this is the ONE place in the whole codebase where
+// that matters. Every other entry point into rules.EvaluateArray and the
+// vendor collectors (the dashboard's handleArrayDetail, and every /scrape
+// HTTP handler Prometheus itself hits) runs inside a net/http request,
+// and Go's own http.Server already recovers a panic per-request without
+// taking the process down. RunMonitor's background loop is different: it
+// is one long-lived goroutine with nothing above it, started once with a
+// bare `go app.RunMonitor(...)` in main.go — an unrecovered panic
+// evaluating ANY single array here would crash the entire process and
+// silently stop monitoring every other array too, on real-world data this
+// was never able to test against live hardware for every vendor/version
+// combination it might meet in production. One array behaving oddly must
+// never be able to take the whole fleet's monitoring down with it.
+func (a *App) monitorOneArray(arr config.Array, windows []maintenance.Window, cfg notify.Config, now time.Time) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[monitor] PANIC evaluating %s (recovered, other arrays unaffected): %v\n%s", arr.ID, r, debug.Stack())
+		}
+	}()
+
+	metrics, err := a.thresholdsFor(arr)
+	if err != nil {
+		return
+	}
+	res, err := rules.EvaluateArray(a.VM, arr, metrics, time.Hour)
+	if err != nil {
+		log.Printf("[monitor] evaluating %s: %v", arr.ID, err)
+		return
+	}
+
+	// EMS events are collected straight from the array, never through
+	// Prometheus/VictoriaMetrics — see internal/netappnative/ems.go's
+	// doc comment for why. ONTAP only; StorageGRID and Pure have no EMS
+	// equivalent Plumb collects today.
+	if a.Events != nil && arr.Vendor == config.VendorNetAppONTAP && a.ONTAP != nil {
+		if emsEvents, err := a.ONTAP.CollectEMSEvents(arr); err != nil {
+			log.Printf("[monitor] collecting EMS events for %s: %v", arr.ID, err)
+		} else if len(emsEvents) > 0 {
+			converted := make([]eventstore.Event, len(emsEvents))
+			for i, e := range emsEvents {
+				converted[i] = eventstore.Event{
+					ArrayID: e.ArrayID, ArrayName: e.ArrayName, Source: "ems", Key: e.DedupKey(),
+					Time: e.Time.Format(time.RFC3339), Severity: e.Severity, Name: e.Name, Node: e.Node, Message: e.Message,
 				}
-				if err := a.Events.Append(converted); err != nil {
-					log.Printf("[monitor] saving EMS events for %s: %v", arr.ID, err)
-				}
-				if cfg.Enabled && cfg.WebhookURL != "" {
-					if muted, _ := maintenance.Active(windows, arr.ID, now); !muted {
-						for _, e := range emsEvents {
-							if !cfg.Meets(e.Severity) {
-								continue
-							}
-							ev := notify.Event{Kind: "ems", ArrayID: e.ArrayID, ArrayName: e.ArrayName, Vendor: arr.Vendor, Label: e.Name, Severity: e.Severity, Timestamp: e.Time, Body: e.Message}
-							if err := notify.Send(a.notifyClient(), cfg, ev); err != nil {
-								log.Printf("[monitor] webhook send failed for EMS event %s/%s: %v", e.ArrayID, e.Name, err)
-							}
+			}
+			if err := a.Events.Append(converted); err != nil {
+				log.Printf("[monitor] saving EMS events for %s: %v", arr.ID, err)
+			}
+			if cfg.Enabled && cfg.WebhookURL != "" {
+				if muted, _ := maintenance.Active(windows, arr.ID, now); !muted {
+					for _, e := range emsEvents {
+						if !cfg.Meets(e.Severity) {
+							continue
+						}
+						ev := notify.Event{Kind: "ems", ArrayID: e.ArrayID, ArrayName: e.ArrayName, Vendor: arr.Vendor, Label: e.Name, Severity: e.Severity, Timestamp: e.Time, Body: e.Message}
+						if err := notify.Send(a.notifyClient(), cfg, ev); err != nil {
+							log.Printf("[monitor] webhook send failed for EMS event %s/%s: %v", e.ArrayID, e.Name, err)
 						}
 					}
 				}
 			}
 		}
-		// Sourced from res.Findings, not res.Panels directly — a panel with
-		// a NodeBreakdownQuery can have a node genuinely worse than its own
-		// fleet-wide average (rules.BuildFindings' node-level finding
-		// block), and that node-level finding's MetricID/Severity are what
-		// need to reach the findings store and webhook, not just the
-		// panel's own (masked) severity.
-		var current []findingstore.CurrentFinding
-		for _, f := range res.Findings {
-			if f.MetricID == "" || (f.Severity != rules.Watch && f.Severity != rules.Critical) {
-				continue // the cross-panel correlation findings have no MetricID and aren't per-metric state to track
-			}
-			current = append(current, findingstore.CurrentFinding{MetricID: f.MetricID, Label: f.Title, Severity: string(f.Severity)})
+	}
+	// Sourced from res.Findings, not res.Panels directly — a panel with
+	// a NodeBreakdownQuery can have a node genuinely worse than its own
+	// fleet-wide average (rules.BuildFindings' node-level finding
+	// block), and that node-level finding's MetricID/Severity are what
+	// need to reach the findings store and webhook, not just the
+	// panel's own (masked) severity.
+	var current []findingstore.CurrentFinding
+	for _, f := range res.Findings {
+		if f.MetricID == "" || (f.Severity != rules.Watch && f.Severity != rules.Critical) {
+			continue // the cross-panel correlation findings have no MetricID and aren't per-metric state to track
 		}
-		newOrEscalated, resolved, err := a.Findings.Reconcile(arr.ID, arr.Name, arr.Vendor, current, now)
-		if err != nil {
-			log.Printf("[monitor] saving findings for %s: %v", arr.ID, err)
-		}
-		if !cfg.Enabled || cfg.WebhookURL == "" {
+		current = append(current, findingstore.CurrentFinding{MetricID: f.MetricID, Label: f.Title, Severity: string(f.Severity)})
+	}
+	newOrEscalated, resolved, err := a.Findings.Reconcile(arr.ID, arr.Name, arr.Vendor, current, now)
+	if err != nil {
+		log.Printf("[monitor] saving findings for %s: %v", arr.ID, err)
+	}
+	if !cfg.Enabled || cfg.WebhookURL == "" {
+		return
+	}
+	muted, _ := maintenance.Active(windows, arr.ID, now)
+	if muted {
+		return
+	}
+	for _, r := range newOrEscalated {
+		if !cfg.Meets(r.Severity) {
 			continue
 		}
-		muted, _ := maintenance.Active(windows, arr.ID, now)
-		if muted {
+		ev := notify.Event{Kind: "new", ArrayID: r.ArrayID, ArrayName: r.ArrayName, Vendor: r.Vendor, MetricID: r.MetricID, Label: r.Label, Severity: r.Severity, Timestamp: now}
+		if body := findingBody(res, r.MetricID); body != "" {
+			ev.Body = body
+		}
+		if err := notify.Send(a.notifyClient(), cfg, ev); err != nil {
+			log.Printf("[monitor] webhook send failed for %s/%s: %v", r.ArrayID, r.MetricID, err)
+		}
+	}
+	for _, r := range resolved {
+		if !cfg.Meets(r.Severity) {
 			continue
 		}
-		for _, r := range newOrEscalated {
-			if !cfg.Meets(r.Severity) {
-				continue
-			}
-			ev := notify.Event{Kind: "new", ArrayID: r.ArrayID, ArrayName: r.ArrayName, Vendor: r.Vendor, MetricID: r.MetricID, Label: r.Label, Severity: r.Severity, Timestamp: now}
-			if body := findingBody(res, r.MetricID); body != "" {
-				ev.Body = body
-			}
-			if err := notify.Send(a.notifyClient(), cfg, ev); err != nil {
-				log.Printf("[monitor] webhook send failed for %s/%s: %v", r.ArrayID, r.MetricID, err)
-			}
-		}
-		for _, r := range resolved {
-			if !cfg.Meets(r.Severity) {
-				continue
-			}
-			ev := notify.Event{Kind: "resolved", ArrayID: r.ArrayID, ArrayName: r.ArrayName, Vendor: r.Vendor, MetricID: r.MetricID, Label: r.Label, Severity: r.Severity, Timestamp: now}
-			if err := notify.Send(a.notifyClient(), cfg, ev); err != nil {
-				log.Printf("[monitor] webhook send failed for %s/%s: %v", r.ArrayID, r.MetricID, err)
-			}
+		ev := notify.Event{Kind: "resolved", ArrayID: r.ArrayID, ArrayName: r.ArrayName, Vendor: r.Vendor, MetricID: r.MetricID, Label: r.Label, Severity: r.Severity, Timestamp: now}
+		if err := notify.Send(a.notifyClient(), cfg, ev); err != nil {
+			log.Printf("[monitor] webhook send failed for %s/%s: %v", r.ArrayID, r.MetricID, err)
 		}
 	}
 }
@@ -170,6 +195,26 @@ func findingBody(res rules.Result, metricID string) string {
 		}
 	}
 	return ""
+}
+
+// buildOneReportSummary is maybeRunScheduledReport's per-array body,
+// isolated behind its own recover() for the same reason monitorOneArray
+// is: this runs in RunMonitor's unprotected background goroutine too, and
+// one array's report failing to build must not cost every other array its
+// spot in the scheduled fleet report (or, absent this, crash the process
+// entirely and silently stop scheduled reporting for good).
+func (a *App) buildOneReportSummary(arrayID string, window time.Duration) (s report.FleetArraySummary, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[monitor] PANIC building scheduled report summary for %s (recovered, other arrays unaffected): %v\n%s", arrayID, r, debug.Stack())
+			ok = false
+		}
+	}()
+	rep, err := a.buildArrayReport(arrayID, window)
+	if err != nil {
+		return report.FleetArraySummary{}, false
+	}
+	return report.FleetArraySummary{Array: rep.Array, Health: rep.Health, IssueCount: rep.IssueCount, TrendPct: rep.TrendPct, TrendLabel: rep.TrendLabel}, true
 }
 
 var notifyHTTPClient = &http.Client{Timeout: 10 * time.Second}
@@ -211,11 +256,9 @@ func (a *App) maybeRunScheduledReport() {
 	}
 	var summaries []report.FleetArraySummary
 	for _, arr := range arrays {
-		rep, err := a.buildArrayReport(arr.ID, time.Duration(hours*float64(time.Hour)))
-		if err != nil {
-			continue
+		if s, ok := a.buildOneReportSummary(arr.ID, time.Duration(hours*float64(time.Hour))); ok {
+			summaries = append(summaries, s)
 		}
-		summaries = append(summaries, report.FleetArraySummary{Array: rep.Array, Health: rep.Health, IssueCount: rep.IssueCount, TrendPct: rep.TrendPct, TrendLabel: rep.TrendLabel})
 	}
 	fleetRep := report.BuildFleetReport(summaries, start, end)
 
