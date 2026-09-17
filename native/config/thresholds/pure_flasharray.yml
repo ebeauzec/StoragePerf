@@ -10,16 +10,20 @@
 # 1. Metric names are verified against Pure Storage's public native
 #    OpenMetrics naming (the `purefa_*` convention documented by the
 #    PureStorage-OpenConnect/pure-fa-openmetrics-exporter project) as of
-#    August 2026. That project's README confirms these metric names exist —
+#    September 2026. That project's spec confirms these metric names exist —
 #    but it also confirms some things do NOT exist as public metrics:
 #    controller busy%/CPU and internal media service-time have no published
 #    metric, and there is no Fibre-Channel-specific port utilization or CRC
 #    error counter — only a generic `purefa_network_interface_performance_*`
-#    family with no confirmed FC-vs-Ethernet label. That's why the back-end
-#    column below is thinner than the front-end one: it reflects what's
-#    actually published today, not a gap in this file. If your array exposes
-#    more (a newer Purity release, or your own REST-API bridge), extend this
-#    file the same way.
+#    family with no confirmed FC-vs-Ethernet label. As of the September 2026
+#    audit that closed most of the earlier gap with netapp_ontap.yml, this
+#    file also covers: per-volume capacity and snapshot-space breakdowns,
+#    the array's own open critical alerts (purefa_alerts_open — Pure's own
+#    alerting system surfaced directly, not a threshold Plumb inferred),
+#    per-component hardware health (purefa_hw_component_status), and host
+#    multipath connectivity health. If your array exposes even more (a
+#    newer Purity release, or your own REST-API bridge), extend this file
+#    the same way.
 #
 # 2. Pure does not publish universal numeric performance SLAs. Every
 #    severity_watch / severity_critical value below is an illustrative
@@ -412,3 +416,131 @@ metrics:
       - "Grow the volume's provisioned size (if the host/application can accommodate a larger LUN) or work with the host owner to reclaim space."
       - "Reduce snapshot retention for the affected volume if snapshots are a significant share of its usage."
       - "Migrate the volume to a less-utilized array if growth is expected to continue and this array is nearing its own physical capacity."
+
+  - id: volume_snapshot_used_percent
+    category: backend
+    label: "Snapshot Space (worst volume)"
+    unit: "%"
+    # Same purefa_volume_space_bytes metric as volume_space_used_percent
+    # above, "snapshots" as a percent of "total_physical" (physical bytes
+    # actually consumed) — the previous metric's own remediate text
+    # already told the reader to check this; there was nothing to check
+    # against before now. Worst single volume, same masking reasoning as
+    # every other worst-of panel in this codebase.
+    query: 'max(purefa_volume_space_bytes{array="{array}",space="snapshots"} / ignoring(space) purefa_volume_space_bytes{array="{array}",space="total_physical"} * 100)'
+    node_breakdown_query: 'topk(10, label_replace(purefa_volume_space_bytes{array="{array}",space="snapshots"} / ignoring(space) purefa_volume_space_bytes{array="{array}",space="total_physical"} * 100, "node", "$1", "name", "(.*)"))'
+    comparison: gt
+    severity_watch: 30
+    severity_critical: 50
+    threshold_label: "< 30% of physical space used (engineering estimate — not independently published)"
+    finding:
+      watch: "Snapshots are consuming {value:.0f}% of this array's fullest volume's physical space — above the 30% guidance."
+      critical: "Snapshots are consuming {value:.0f}% of this array's fullest volume's physical space — snapshot retention is very likely driving that volume's own capacity pressure."
+    investigate:
+      - "Identify the specific volume from the breakdown below and review its snapshot schedule/retention policy in Purity."
+      - "Check for an unusually high change rate (bulk delete/rewrite) on that volume, which inflates snapshot space even with a normal retention count."
+    remediate:
+      - "Reduce snapshot retention or schedule frequency for the affected volume if it exceeds what's actually needed."
+      - "Delete specific old/large snapshots directly if a known one-time event (migration, bulk load) is responsible."
+
+  - id: array_open_alerts
+    category: backend
+    label: "Open Critical Alerts"
+    unit: "alerts"
+    # purefa_alerts_open is real and confirmed (specification/metrics/
+    # purefa-metrics.md, checked September 2026) — one series per
+    # currently-open alert, severity in {info, warning, critical, hidden}
+    # as a label, not the value (the value itself doesn't carry meaning
+    # per the spec; count() correctly counts matching series regardless).
+    # Scoped to critical only, same curation philosophy as ONTAP's EMS
+    # event allowlist (config/thresholds/netapp_ontap.yml's ems.go
+    # collector) — Purity's own "warning"/"info" tiers are lower-urgency
+    # by Pure's own convention, surfacing only what Pure itself already
+    # calls critical rather than adding a second, redundant severity
+    # judgment on top of the vendor's own. This is the array's own
+    # alerting system, not a threshold Plumb computed — if this fires,
+    # the array is telling you something directly, not being inferred.
+    # `or vector(0)` matters here, not decoration: count() over zero
+    # matching series returns NO result in PromQL, not 0 — without the
+    # fallback, an array with genuinely zero open critical alerts (the
+    # normal, healthy case) would show this panel as permanently "no
+    # data" instead of "0, all clear", which is actively misleading on
+    # exactly the kind of panel that needs to be trusted when it's quiet.
+    query: 'count(purefa_alerts_open{array="{array}",severity="critical"}) or vector(0)'
+    comparison: gt
+    severity_watch: 1
+    severity_critical: 1
+    threshold_label: "0 — any open critical alert from the array itself is worth acting on"
+    finding:
+      watch: "This array has {value:.0f} open critical alert(s) in Purity."
+      critical: "This array has {value:.0f} open critical alert(s) in Purity — the array itself is reporting a problem, not an inferred one."
+    investigate:
+      - "Open the array's own Alerts view (Purity UI or `pureadmin list --alerts`) for the specific alert code, component, and summary text — this panel only counts them, it doesn't reproduce Purity's own detail."
+      - "Check whether the alert correlates with any other panel here (capacity, hardware component health, replication) already showing a problem."
+    remediate:
+      - "Follow Purity's own recommended action for the specific alert code — it's usually explicit about what to do."
+      - "Escalate to Pure support with the alert code and a support bundle if the recommended action doesn't resolve it."
+      - "Acknowledge/clear the alert in Purity once resolved — this panel reflects Purity's own open-alert state directly."
+
+  - id: array_hardware_unhealthy_components
+    category: backend
+    label: "Hardware Component Health"
+    unit: "components"
+    # purefa_hw_component_status is real and confirmed (same spec doc as
+    # above) — one series per hardware component (chassis, drive_bay,
+    # nvram_bay, power_supply, temp_sensor, controller, eth_port, cooling,
+    # fc_port), component_status in {ok, critical, degraded, device_off,
+    # identifying, not_installed, unknown}. Counts only the genuinely bad
+    # states (critical/degraded/device_off) — not_installed is a normal
+    # empty bay, identifying is often technician-driven (a tech blinking
+    # a light to locate a part, not necessarily itself a failure), and
+    # unknown is treated as neutral rather than alarming on ambiguity.
+    # `or vector(0)` for the same reason as array_open_alerts above — an
+    # array with every component reporting "ok" would otherwise show
+    # this panel as "no data" instead of "0, all clear".
+    query: 'count(purefa_hw_component_status{array="{array}",component_status=~"^(critical|degraded|device_off)$"}) or vector(0)'
+    comparison: gt
+    severity_watch: 1
+    severity_critical: 2
+    threshold_label: "0 — every hardware component should report ok"
+    finding:
+      watch: "{value:.0f} hardware component(s) are reporting a degraded or critical status."
+      critical: "{value:.0f} hardware components are reporting a degraded or critical status — check whether redundancy (dual power supply, dual controller) still covers this."
+    investigate:
+      - "Open the array's own Hardware view (Purity UI or `pureadmin list --hardware`) to identify the specific component(s) and their exact status."
+      - "Confirm which redundant pair (if any) the affected component belongs to, and whether its partner is still healthy."
+    remediate:
+      - "Replace the failed/degraded component (drive, power supply, fan) per Pure's field-replacement procedure."
+      - "Engage Pure support if the component is under warranty/support contract, or if the failure mode is unclear."
+      - "If a redundant component's partner is also affected, treat this as urgent — redundancy no longer covers a second failure."
+
+  - id: host_connectivity_unhealthy
+    category: frontend
+    label: "Host Connectivity"
+    unit: "hosts"
+    # purefa_host_connectivity_info is real and confirmed (same spec doc
+    # as above) — one series per host, status in {healthy, critical,
+    # unused}. "unused" (a defined host with no active connection, e.g.
+    # decommissioned but not yet removed) is excluded — not a fault.
+    # Frontend category: a host losing multipath redundancy is exactly
+    # the kind of thing this array's own front-end panels can't see on
+    # their own (latency/IOPS look fine right up until the LAST path
+    # also drops), the same reasoning switch_port_utilization/errors are
+    # frontend even though they're not literally inside the array.
+    # `or vector(0)` for the same reason as array_open_alerts above — an
+    # array with every host reporting healthy would otherwise show this
+    # panel as "no data" instead of "0, all clear".
+    query: 'count(purefa_host_connectivity_info{array="{array}",status="critical"}) or vector(0)'
+    comparison: gt
+    severity_watch: 1
+    severity_critical: 1
+    threshold_label: "0 — every connected host should report healthy multipath status"
+    finding:
+      watch: "{value:.0f} host(s) are reporting critical connectivity status — check multipath redundancy before this becomes an outage."
+      critical: "{value:.0f} host(s) are reporting critical connectivity status."
+    investigate:
+      - "Open the array's own Hosts/Connectivity view (Purity UI or `pureadmin list --host --connect`) to identify the specific host(s) and which path(s) are down."
+      - "Confirm whether this is one path down (multipath still covering it) or every path (a real outage for that host)."
+    remediate:
+      - "Restore the missing path(s): check cabling, zoning, or switch-port status on the affected fabric."
+      - "Engage the host owner if the host-side HBA/driver/multipath configuration is the suspected cause."

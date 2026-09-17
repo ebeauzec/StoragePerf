@@ -125,10 +125,65 @@ func writeFlashArrayMetrics(w http.ResponseWriter, arr mockdata.Array, counters 
 	volSizeBytes := 2_000_000_000_000.0 // 2TB provisioned, a round number for a readable mock response
 	vol1Pct := arr.CurrentValue("volume_space_used_percent", arr.ID+"|volume_space_used_percent", "backend", 80, 95, now)
 	vol2Pct := arr.ValueForSeverity(arr.ID+"|volume_space_used_percent|vol-2", "healthy", 80, 95, now)
+	vol1Physical := volSizeBytes * vol1Pct / 100
+	vol2Physical := volSizeBytes * vol2Pct / 100
 	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-1",space="total_provisioned"}`, volSizeBytes)
-	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-1",space="total_physical"}`, volSizeBytes*vol1Pct/100)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-1",space="total_physical"}`, vol1Physical)
 	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-2",space="total_provisioned"}`, volSizeBytes)
-	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-2",space="total_physical"}`, volSizeBytes*vol2Pct/100)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-2",space="total_physical"}`, vol2Physical)
+
+	// volume_snapshot_used_percent: same purefa_volume_space_bytes metric,
+	// "snapshots" as a fraction of each volume's own total_physical above.
+	vol1SnapPct := arr.CurrentValue("volume_snapshot_used_percent", arr.ID+"|volume_snapshot_used_percent", "backend", 30, 50, now)
+	vol2SnapPct := arr.ValueForSeverity(arr.ID+"|volume_snapshot_used_percent|vol-2", "healthy", 30, 50, now)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-1",space="snapshots"}`, vol1Physical*vol1SnapPct/100)
+	fprintGauge(w, "purefa_volume_space_bytes", "FlashArray volume space in bytes", `{name="vol-2",space="snapshots"}`, vol2Physical*vol2SnapPct/100)
+
+	// array_open_alerts, array_hardware_unhealthy_components,
+	// host_connectivity_unhealthy: all three are "either something is
+	// definitely wrong, or nothing is" states, not metrics that scale
+	// with a general Profile the way latency/capacity percentages do —
+	// gated on an explicit Overrides entry directly (mock-fa-hwfault-01
+	// below), not arr.SeverityFor. SeverityFor's own critical+backend
+	// downgrade only applies to category:"backend" metrics; using it here
+	// for host_connectivity_unhealthy (category:"frontend") would leak
+	// a fake critical host status onto every "critical"-Profile array
+	// including the flagship mock-fa-prod-east-01, not just the one
+	// scenario meant to demonstrate it — confirmed live before this fix.
+	alertsCritical := arr.Overrides["array_open_alerts"] == "critical"
+	hwCritical := arr.Overrides["array_hardware_unhealthy_components"] == "critical"
+	hostCritical := arr.Overrides["host_connectivity_unhealthy"] == "critical"
+
+	// array_open_alerts: purefa_alerts_open, one series per open alert.
+	// No series at all in the normal case (the array has nothing open) —
+	// count()-over-nothing correctly reads as 0/good via the yml query's
+	// own `or vector(0)` fallback, not by emitting a fake "clean" row here.
+	if alertsCritical {
+		fprintGauge(w, "purefa_alerts_open", "FlashArray open alerts", `{name="alert-1",code="colossal_failure",component_type="array",severity="critical",category="hardware",summary="mock critical alert for demo purposes"}`, 1)
+	}
+
+	// array_hardware_unhealthy_components: purefa_hw_component_status, one
+	// series per component, always emitted (every component reports SOME
+	// status in reality) — all "ok" except on the dedicated scenario,
+	// where one power supply flips to "critical".
+	psStatus := "ok"
+	if hwCritical {
+		psStatus = "critical"
+	}
+	fprintGauge(w, "purefa_hw_component_status", "FlashArray hardware component status", `{component_name="CT0.PWR0",component_type="power_supply",component_status="`+psStatus+`"}`, 1)
+	fprintGauge(w, "purefa_hw_component_status", "FlashArray hardware component status", `{component_name="CT1.PWR0",component_type="power_supply",component_status="ok"}`, 1)
+	fprintGauge(w, "purefa_hw_component_status", "FlashArray hardware component status", `{component_name="CT0.ETH0",component_type="eth_port",component_status="ok"}`, 1)
+
+	// host_connectivity_unhealthy: purefa_host_connectivity_info, one
+	// series per host, always emitted (same reasoning as hardware status
+	// above) — healthy on every mock array today, since no scenario
+	// dedicates itself to this one specifically yet.
+	hostStatus := "healthy"
+	if hostCritical {
+		hostStatus = "critical"
+	}
+	fprintGauge(w, "purefa_host_connectivity_info", "FlashArray host connectivity status", `{host="esx-host-01",status="`+hostStatus+`"}`, 1)
+	fprintGauge(w, "purefa_host_connectivity_info", "FlashArray host connectivity status", `{host="esx-host-02",status="healthy"}`, 1)
 
 	// host_iops_read / host_iops_write: purefa_array_performance_throughput_iops,
 	// dimension reads_per_sec/writes_per_sec — genuinely new metric, not

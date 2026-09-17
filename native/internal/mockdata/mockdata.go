@@ -211,6 +211,26 @@ var Fleet = []Array{
 		ID: "mock-ontap-ems-01", Name: "ontap-ems-01", Model: "AFF A250", Vendor: config.VendorNetAppONTAP,
 		Profile: "healthy",
 	},
+
+	// 8. A Pure FlashArray with a failed power supply and an open critical
+	// Purity alert about it, while every performance/capacity metric stays
+	// clean — the array-health equivalent of mock-sg-grid-02's isolated
+	// ILM backlog above: a real, worsening problem (redundancy is down to
+	// one power supply) that's invisible on every performance panel, only
+	// visible through the array's own hardware/alerting state
+	// (array_open_alerts, array_hardware_unhealthy_components — see
+	// pure_flasharray.yml's September 2026 addition). Demonstrates why
+	// those two panels exist at all: a dashboard that only watches
+	// latency/capacity would show this array as fully healthy right up
+	// until the second power supply also fails.
+	{
+		ID: "mock-fa-hwfault-01", Name: "fa-hwfault-01", Model: "FA-X70R3", Vendor: config.VendorPureFlashArray,
+		Profile: "healthy",
+		Overrides: map[string]string{
+			"array_open_alerts":                   "critical",
+			"array_hardware_unhealthy_components": "critical",
+		},
+	},
 }
 
 func (a Array) AsConfigArray() config.Array {
