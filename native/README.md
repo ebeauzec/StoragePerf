@@ -29,7 +29,9 @@ extract it, then:
 | **Linux** | `./plumb` or `./start.sh` from inside the extracted folder |
 | **Windows** | Double-click `start.bat`, or run `plumb.exe` directly, from inside the extracted folder |
 
-Either way: open **http://localhost:8000**, then edit `config/arrays.yml`
+Either way, Plumb opens **http://localhost:8000** in your default browser
+itself (set `PLUMB_NO_BROWSER=1` to disable; skipped automatically on a
+Linux machine with no display). Then edit `config/arrays.yml`
 (or use the **Config** tab) to point it at your real systems.
 
 macOS may show an "unidentified developer" warning, and Windows a

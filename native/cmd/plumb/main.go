@@ -299,6 +299,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+	// After the listener is bound, so a failed start (port already in use)
+	// never opens a browser at a page that isn't there. Connections made
+	// before Serve is accepting just queue on the bound socket.
+	go openBrowser("http://localhost:" + listenPort)
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}

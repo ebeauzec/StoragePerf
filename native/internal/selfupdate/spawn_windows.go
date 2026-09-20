@@ -17,6 +17,9 @@ const detachedProcess = 0x00000008
 func spawnDetached(exePath, dir string, logFile *os.File) error {
 	cmd := exec.Command(exePath)
 	cmd.Dir = dir
+	// The page that triggered the update reloads itself once this process answers
+	// (app.js waitForRestart) — opening another tab here would just duplicate it.
+	cmd.Env = append(os.Environ(), "PLUMB_NO_BROWSER=1")
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | detachedProcess}

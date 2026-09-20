@@ -251,7 +251,10 @@ automatically) rather than double-clicking `plumb.exe` directly the first
 time — see [Troubleshooting](#11-troubleshooting) for the manual fix
 either way.
 
-Open **http://localhost:8000**. First run creates `config/arrays.yml` from
+Plumb opens **http://localhost:8000** in your default browser as soon as it
+starts (set `PLUMB_NO_BROWSER=1` to turn that off, e.g. on a server you
+reach over SSH — it's skipped automatically on a Linux machine with no
+display). First run creates `config/arrays.yml` from
 the bundled example automatically. Edit that file (or use the **Config**
 tab) to add your real systems — see
 [native/config/arrays.example.yml](native/config/arrays.example.yml) for
