@@ -222,6 +222,37 @@ automatically; see [Upgrading without losing data](native/README.md#upgrading-wi
 for exactly what's preserved and the manual procedure for any other
 upgrade path.
 
+### Dark sites (no internet at all)
+
+Plumb never needs the internet to run. The launcher scripts try GitHub
+first, and if it can't be reached they carry on instead of failing:
+
+1. **Nothing installed yet:** on any machine with internet, download the
+   release archive for the dark site's platform (see the list under
+   [Manual path](#manual-path-any-platform-or-air-gapped-pilot-sites-with-no-internet)),
+   copy it into the same folder as `run.sh` / `run.ps1` (leave it zipped
+   or gzipped), and run the script. It installs from that archive.
+2. **Already installed:** just run the script; with no internet it starts
+   the version that's installed.
+3. **Upgrading:** copy a newer `plumb-<version>-<platform>` archive next to
+   the script and run it. A newer archive is installed (your metrics
+   database and array inventory carry over, exactly as with an online
+   upgrade); an older one is ignored. Nothing is ever downgraded.
+
+Set `PLUMB_OFFLINE=1` to skip the internet check entirely instead of
+waiting a few seconds for it to fail (worth setting permanently on a
+firewalled network that silently drops packets). If a download starts but
+fails partway, an existing install is left untouched and started as-is.
+
+The app itself is equally self-contained: the dashboard's fonts are bundled
+in the binary (nothing is fetched from Google Fonts or any CDN), and the
+only outbound connection Plumb ever makes on its own is the daily
+"is there a newer release" check, which quietly shows as unreachable when
+there's no route out. `PLUMB_CHECK_FOR_UPDATES=false` turns it off. Every
+system Plumb collects from (arrays, switches) is on your own network; a
+notification webhook, if you configure one, goes wherever you point it, so
+use an internal endpoint on a dark site.
+
 ### Manual path (any platform, or air-gapped/pilot sites with no internet)
 
 **Prerequisites:** none. Not Docker, not Python, not Node — the executable

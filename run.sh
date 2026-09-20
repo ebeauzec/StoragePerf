@@ -2,7 +2,7 @@
 # Zero-install launcher for the native build: fetches the latest released
 # Plumb binary for your platform and starts it. This is what makes
 # "download the repo, unzip it, run one script" work again after the move
-# away from Docker — see native/README.md for why that move happened
+# away from Docker -- see native/README.md for why that move happened
 # (cross-platform NetApp support, no Docker requirement for locked-down
 # pilot sites) and README.md section 4 for the manual alternative.
 #
@@ -12,11 +12,27 @@
 # to block and there's no "unidentified developer" prompt to click through.
 # The xattr strip below is a defensive no-op for the rare case something
 # in the chain quarantines it anyway.
+#
+# DARK SITES / NO INTERNET: this script never *requires* the internet.
+# If GitHub can't be reached (or PLUMB_OFFLINE=1 is set, which skips the
+# attempt entirely), it falls back in this order:
+#   1. A release archive sitting next to this script
+#      (plumb-<version>-<platform>.tar.gz, downloaded on a connected
+#      machine and carried across) is installed if it is newer than what's
+#      already installed -- this is how a dark site is upgraded.
+#   2. Otherwise the already-installed version is started as-is.
+#   3. Otherwise it says exactly what to copy here and stops.
+# A download that fails partway never touches a working install.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 REPO="ebeauzec/StoragePerf"
 DEST="plumb-release"
+# Overridable so the launcher can be pointed at an internal mirror that
+# serves GitHub's release JSON, and so the offline path can be tested by
+# aiming this at a dead port. Not needed for normal use.
+API="${PLUMB_RELEASE_API:-https://api.github.com/repos/$REPO/releases/latest}"
+marker="$DEST/.installed_version"
 
 os="$(uname -s)"
 arch="$(uname -m)"
@@ -25,7 +41,7 @@ case "$os" in
   Linux) platform_os=linux ;;
   *)
     echo "This is the macOS/Linux launcher. On Windows, run run.ps1 instead" >&2
-    echo "(same repo root) — or download plumb-<version>-windows_amd64.zip" >&2
+    echo "(same repo root) -- or download plumb-<version>-windows_amd64.zip" >&2
     echo "directly from https://github.com/$REPO/releases/latest" >&2
     exit 1
     ;;
@@ -40,45 +56,44 @@ case "$arch" in
 esac
 platform="${platform_os}_${platform_arch}"
 
-echo "==> Checking the latest release for $platform"
-# curl's own failure (rate-limited, offline, GitHub down) is handled
-# explicitly here rather than left to `set -e`: under errexit, a plain
-# `var=$(failing_command)` assignment still aborts the script immediately
-# on that command's nonzero exit, but with only curl's own terse message
-# ("curl: (22) The requested URL returned error: 403") and none of the
-# context below -- indistinguishable from the script silently doing
-# nothing. The `|| true` catches that and routes it through the same
-# clear message the empty-tag/asset_url case already had.
-api_json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest") || api_json=""
-tag=$(printf '%s' "$api_json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
-asset_url=$(printf '%s' "$api_json" \
-  | grep -o "\"browser_download_url\": *\"[^\"]*plumb-[^\"]*-${platform}\.tar\.gz\"" \
-  | sed -E 's/.*"(https:[^"]+)"/\1/' | head -1)
+# ver_gt A B: succeeds when dotted version A is strictly newer than B.
+# Plain awk rather than `sort -V`, which older macOS versions lack.
+ver_gt() {
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    n = split(a, x, "."); m = split(b, y, "."); k = (n > m ? n : m)
+    for (i = 1; i <= k; i++) { xi = x[i] + 0; yi = y[i] + 0
+      if (xi > yi) exit 0
+      if (xi < yi) exit 1 }
+    exit 1 }'
+}
 
-if [ -z "$tag" ] || [ -z "$asset_url" ]; then
-  echo "Couldn't reach GitHub or find a $platform release asset automatically." >&2
-  echo "(A common cause is GitHub's unauthenticated API rate limit -- 60 requests/hour" >&2
-  echo "per IP; wait a few minutes and try again if you've run this repeatedly.)" >&2
-  echo "Download it manually from: https://github.com/$REPO/releases/latest" >&2
-  exit 1
-fi
+# installed_version prints the installed version without its leading "v",
+# or nothing if there's no usable install. Requiring the binary itself (not
+# just the marker) means a partial/corrupt install counts as "not installed".
+installed_version() {
+  if [ -x "$DEST/plumb" ] && [ -f "$marker" ]; then
+    sed -e 's/^v//' -e 's/[[:space:]]*$//' "$marker"
+  fi
+}
 
-marker="$DEST/.installed_version"
-if [ -x "$DEST/plumb" ] && [ -f "$marker" ] && [ "$(cat "$marker")" = "$tag" ]; then
-  echo "==> $tag already installed at ./$DEST — starting"
-else
-  asset_name=$(basename "$asset_url")
-  echo "==> Downloading $asset_name ($tag)"
-  tmp=$(mktemp -d)
-  curl -fsSL -o "$tmp/$asset_name" "$asset_url"
+start_plumb() {
+  echo "==> Starting Plumb -- http://localhost:8000"
+  cd "$DEST"
+  exec ./start.sh
+}
+
+# install_archive ARCHIVE TAG DELETE(yes|no): replaces the installed copy
+# with ARCHIVE's contents, carrying over what the user owns.
+install_archive() {
+  local archive="$1" tag="$2" delete_after="$3"
 
   # Preserve what the user actually owns across the upgrade: the collected
   # metrics database and their real array inventory/settings. An upgrade
-  # replaces the application code and bundled defaults — it must never
+  # replaces the application code and bundled defaults -- it must never
   # throw away a live database or real credentials to do that. Held in a
-  # sibling dir (not $tmp, which mktemp may place on a different
+  # sibling dir (not a mktemp dir, which may sit on a different
   # filesystem/volume) so the final restore is a same-filesystem mv.
-  preserve=".plumb-upgrade-preserve"
+  local preserve=".plumb-upgrade-preserve"
   rm -rf "$preserve"
   mkdir -p "$preserve"
   [ -d "$DEST/data" ] && mv "$DEST/data" "$preserve/data"
@@ -91,16 +106,14 @@ else
   echo "==> Installing to ./$DEST"
   rm -rf "$DEST"
   mkdir -p "$DEST"
-  tar -xzf "$tmp/$asset_name" -C "$DEST" --strip-components=1
-  rm -rf "$tmp"
+  tar -xzf "$archive" -C "$DEST" --strip-components=1
+  [ "$delete_after" = "yes" ] && rm -f "$archive"
 
   # Scoped to the freshly-extracted files, before the (possibly large,
   # possibly slow-to-traverse on a cloud-synced folder) preserved data/
-  # directory gets moved back in below — there is nothing to strip from a
-  # database this script already had on disk, and re-scanning it on every
-  # single launch (not just a fresh install) was a real, needless cost on
-  # anything other than a fast local disk. See this file's header comment
-  # for why this is a defensive no-op even for the files it does scan.
+  # directory gets moved back in below -- there is nothing to strip from a
+  # database this script already had on disk. See this file's header
+  # comment for why this is a defensive no-op even for the files it scans.
   if command -v xattr >/dev/null 2>&1; then
     xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
   fi
@@ -114,8 +127,82 @@ else
   rm -rf "$preserve"
 
   echo "$tag" > "$marker"
+}
+
+# offline_start is everything that happens when there's no release to
+# download: use a newer local archive if one was dropped next to this
+# script, else the installed copy, else explain what's needed.
+offline_start() {
+  local best="" best_ver="" f v inst
+  for f in plumb-*-"$platform".tar.gz; do
+    [ -f "$f" ] || continue
+    v="${f#plumb-}"; v="${v%-"$platform".tar.gz}"
+    if [ -z "$best" ] || ver_gt "$v" "$best_ver"; then best="$f"; best_ver="$v"; fi
+  done
+  inst="$(installed_version)"
+
+  if [ -n "$best" ] && { [ -z "$inst" ] || ver_gt "$best_ver" "$inst"; }; then
+    echo "==> Installing from the local archive $best (version $best_ver)"
+    install_archive "$best" "v$best_ver" no
+    start_plumb
+  elif [ -n "$inst" ]; then
+    echo "==> Starting the installed version (v$inst)"
+    start_plumb
+  fi
+
+  echo "" >&2
+  echo "Plumb isn't installed yet, and there's no internet access to download it." >&2
+  echo "On a machine that has internet, download plumb-<version>-$platform.tar.gz from" >&2
+  echo "  https://github.com/$REPO/releases/latest" >&2
+  echo "copy it into this folder ($(pwd)) and run this script again." >&2
+  exit 1
+}
+
+tag=""
+asset_url=""
+case "${PLUMB_OFFLINE:-}" in
+  ""|0|false|no)
+    echo "==> Checking the latest release for $platform"
+    # Every step below tolerates failure on purpose. Under `set -e` +
+    # pipefail a bare curl failure, or a grep that matches nothing on an
+    # empty response, would abort the whole script with no message at all
+    # -- exactly the situation (no internet) this has to handle calmly.
+    api_json="$(curl -fsSL --connect-timeout 5 --max-time 20 "$API" 2>/dev/null)" || api_json=""
+    tag="$(printf '%s' "$api_json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')" || tag=""
+    asset_url="$(printf '%s' "$api_json" \
+      | grep -o "\"browser_download_url\": *\"[^\"]*plumb-[^\"]*-${platform}\.tar\.gz\"" \
+      | sed -E 's/.*"(https:[^"]+)"/\1/' | head -1)" || asset_url=""
+    if [ -z "$tag" ] || [ -z "$asset_url" ]; then
+      echo "==> Couldn't reach the release server (no internet, a firewall, or GitHub's rate limit) -- continuing offline"
+    fi
+    ;;
+  *)
+    echo "==> PLUMB_OFFLINE is set -- not contacting the release server"
+    ;;
+esac
+
+if [ -z "$tag" ] || [ -z "$asset_url" ]; then
+  offline_start
 fi
 
-echo "==> Starting Plumb — http://localhost:8000"
-cd "$DEST"
-exec ./start.sh
+inst="$(installed_version)"
+if [ -n "$inst" ] && [ "v$inst" = "$tag" ]; then
+  echo "==> $tag already installed at ./$DEST -- starting"
+  start_plumb
+fi
+
+asset_name="$(basename "$asset_url")"
+echo "==> Downloading $asset_name ($tag)"
+tmp="$(mktemp -d)"
+if curl -fsSL --connect-timeout 10 -o "$tmp/$asset_name" "$asset_url"; then
+  install_archive "$tmp/$asset_name" "$tag" yes
+  rm -rf "$tmp"
+  start_plumb
+fi
+
+# The release server answered but the download itself failed (a flaky or
+# filtered connection). Nothing has been touched yet, so fall back exactly
+# as if there were no internet at all rather than leaving the user stuck.
+rm -rf "$tmp"
+echo "==> The download failed -- continuing offline"
+offline_start

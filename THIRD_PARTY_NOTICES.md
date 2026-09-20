@@ -8,8 +8,8 @@ This file lists every third-party open-source component Plumb downloads,
 bundles, statically links, or depends on to build/run, none of which are
 covered by that proprietary license — each remains under its own original
 license, reproduced in full under [`LICENSES/`](LICENSES/). All components
-below are permissively licensed (Apache-2.0, MIT, or BSD-3-Clause); none are
-copyleft, and none restrict Plumb's own licensing choices.
+below are permissively licensed (Apache-2.0, MIT, BSD-3-Clause, or SIL OFL 1.1
+for the bundled fonts); none are copyleft, and none restrict Plumb's own licensing choices.
 
 **Nothing in this file or in Plumb implies endorsement, sponsorship, or
 certification of Plumb by any of the organizations listed below.**
@@ -56,6 +56,26 @@ Plumb.
 
 Full texts at [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt) and
 [`LICENSES/MIT.txt`](LICENSES/MIT.txt).
+
+---
+
+## Bundled web fonts (native build — `native/web/fonts/`)
+
+The dashboard's typefaces are shipped inside the binary and served locally,
+rather than loaded from Google Fonts at runtime, so the UI renders identically
+on a network with no internet access. Files are the unmodified latin-subset
+WOFF2 builds Google Fonts distributes for these open-source families.
+
+| Component | License | Copyright | Source |
+|---|---|---|---|
+| **Archivo** | SIL Open Font License 1.1 | The Archivo Project Authors | https://github.com/Omnibus-Type/Archivo |
+| **IBM Plex Sans**, **IBM Plex Mono** | SIL Open Font License 1.1 (Reserved Font Name "Plex") | IBM Corp. | https://github.com/IBM/plex |
+
+Full license texts (each carrying its own copyright notice, as OFL §2
+requires) at [`LICENSES/OFL-1.1-Archivo.txt`](LICENSES/OFL-1.1-Archivo.txt)
+and [`LICENSES/OFL-1.1-IBM-Plex.txt`](LICENSES/OFL-1.1-IBM-Plex.txt). The
+fonts are not sold on their own and are not modified beyond Google's own
+subsetting.
 
 ---
 
