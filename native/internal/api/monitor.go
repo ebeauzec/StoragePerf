@@ -52,6 +52,7 @@ func (a *App) RunMonitor(interval time.Duration, stopCh <-chan struct{}) {
 		case <-ticker.C:
 			a.monitorOnce()
 			a.maybeRunScheduledReport()
+			a.maybeRunScheduledAriaExport()
 		}
 	}
 }

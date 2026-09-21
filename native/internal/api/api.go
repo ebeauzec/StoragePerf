@@ -59,6 +59,12 @@ type App struct {
 	scheduledReportsEnabled bool
 	scheduledReportInterval string
 	scheduledReportHours    float64
+	ariaExportToken         string
+	ariaExportEnabled       bool
+	ariaSiteLabel           string
+
+	ariaMu       sync.Mutex
+	ariaIdentity map[string]ariaCachedIdentity // ONTAP identity per array ID — see ariaIdentityFor
 }
 
 // LoadSettings reads the persisted mock-data toggle and retention period at
@@ -77,6 +83,9 @@ func (a *App) LoadSettings() error {
 	a.scheduledReportsEnabled = s.ScheduledReportsEnabled
 	a.scheduledReportInterval = s.ScheduledReportInterval
 	a.scheduledReportHours = s.ScheduledReportHours
+	a.ariaExportToken = s.AriaExportToken
+	a.ariaExportEnabled = s.AriaExportEnabled
+	a.ariaSiteLabel = s.AriaSiteLabel
 	a.settingsMu.Unlock()
 	return nil
 }
@@ -118,6 +127,9 @@ func (a *App) saveSettings(s config.Settings) error {
 	a.scheduledReportsEnabled = s.ScheduledReportsEnabled
 	a.scheduledReportInterval = s.ScheduledReportInterval
 	a.scheduledReportHours = s.ScheduledReportHours
+	a.ariaExportToken = s.AriaExportToken
+	a.ariaExportEnabled = s.AriaExportEnabled
+	a.ariaSiteLabel = s.AriaSiteLabel
 	a.settingsMu.Unlock()
 
 	if retentionChanged && a.RestartVM != nil {
@@ -507,6 +519,7 @@ func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	a.settingsMu.RLock()
 	notifyEnabled, webhookURL, minSev := a.notifyEnabled, a.notifyWebhookURL, a.notifyMinSeverity
 	schedEnabled, schedInterval := a.scheduledReportsEnabled, a.scheduledReportInterval
+	ariaToken, ariaEnabled, ariaSite := a.ariaExportToken, a.ariaExportEnabled, a.ariaSiteLabel
 	a.settingsMu.RUnlock()
 	if minSev == "" {
 		minSev = "critical"
@@ -525,6 +538,9 @@ func (a *App) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"scheduled_reports_enabled": schedEnabled,
 		"scheduled_report_interval": schedInterval,
 		"schedule_options":          scheduleOptions,
+		"aria_export_token":         ariaToken,
+		"aria_export_enabled":       ariaEnabled,
+		"aria_site_label":           ariaSite,
 	})
 }
 
@@ -537,6 +553,12 @@ func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyMinSeverity       string `json:"notify_min_severity"`
 		ScheduledReportsEnabled bool   `json:"scheduled_reports_enabled"`
 		ScheduledReportInterval string `json:"scheduled_report_interval"`
+		// Pointers: this endpoint rewrites every setting together, so a client
+		// that doesn't know about these (an older cached frontend) must not
+		// silently blank the ARIA integration — nil means "leave as is".
+		AriaExportToken   *string `json:"aria_export_token"`
+		AriaExportEnabled *bool   `json:"aria_export_enabled"`
+		AriaSiteLabel     *string `json:"aria_site_label"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		httpError(w, 400, err)
@@ -569,6 +591,18 @@ func (a *App) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		NotifyEnabled: payload.NotifyEnabled, NotifyWebhookURL: payload.NotifyWebhookURL, NotifyMinSeverity: payload.NotifyMinSeverity,
 		ScheduledReportsEnabled: payload.ScheduledReportsEnabled, ScheduledReportInterval: payload.ScheduledReportInterval,
 		ScheduledReportHours: config.ScheduleReportHours(payload.ScheduledReportInterval),
+	}
+	a.settingsMu.RLock()
+	s.AriaExportToken, s.AriaExportEnabled, s.AriaSiteLabel = a.ariaExportToken, a.ariaExportEnabled, a.ariaSiteLabel
+	a.settingsMu.RUnlock()
+	if payload.AriaExportToken != nil {
+		s.AriaExportToken = strings.TrimSpace(*payload.AriaExportToken)
+	}
+	if payload.AriaExportEnabled != nil {
+		s.AriaExportEnabled = *payload.AriaExportEnabled
+	}
+	if payload.AriaSiteLabel != nil {
+		s.AriaSiteLabel = strings.TrimSpace(*payload.AriaSiteLabel)
 	}
 	if err := a.saveSettings(s); err != nil {
 		httpError(w, 500, err)
@@ -816,6 +850,10 @@ func (a *App) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/arrays/{id}/discover", a.handleDiscoverMetrics)
 	mux.HandleFunc("GET /api/reports/history", a.handleReportHistory)
 	mux.HandleFunc("GET /api/reports/history/{name}", a.handleReportHistoryFile)
+	mux.HandleFunc("GET /api/aria/info", a.handleAriaInfo)
+	mux.HandleFunc("GET /api/aria/export", a.handleAriaExport)
+	mux.HandleFunc("GET /api/aria/exports", a.handleAriaExports)
+	mux.HandleFunc("GET /api/aria/exports/{name}", a.handleAriaExportFile)
 	mux.HandleFunc("GET /api/findings", a.handleFindings)
 	mux.HandleFunc("GET /api/findings/history", a.handleFindingsHistory)
 	mux.HandleFunc("GET /api/events", a.handleEvents)

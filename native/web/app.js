@@ -744,9 +744,17 @@ async function loadConfigView() {
   scheduleSelect.value = state.scheduledReportInterval;
   document.getElementById("schedule-enabled-toggle").checked = state.scheduledReportsEnabled;
 
+  state.ariaExportToken = settings.aria_export_token || "";
+  state.ariaSiteLabel = settings.aria_site_label || "";
+  state.ariaExportEnabled = !!settings.aria_export_enabled;
+  document.getElementById("aria-token").value = state.ariaExportToken;
+  document.getElementById("aria-site-label").value = state.ariaSiteLabel;
+  document.getElementById("aria-export-enabled-toggle").checked = state.ariaExportEnabled;
+  document.getElementById("aria-pull-url").textContent = `${location.origin}/api/aria/export`;
+
   renderDiscoveryPicker();
 
-  await Promise.all([renderUpdatesRows(), renderReportHistory()]);
+  await Promise.all([renderUpdatesRows(), renderReportHistory(), renderAriaExports()]);
 }
 
 /* ---------------- metrics discovery ---------------- */
@@ -810,6 +818,55 @@ document.getElementById("save-schedule").addEventListener("click", async () => {
     status.textContent = `Save failed: ${e.message}`;
   }
 });
+
+/* ---------------- ARIA integration ---------------- */
+// The same JSON ARIA pulls (GET /api/aria/export), offered as a file and as the
+// scheduled copies in data/aria-exports/. See internal/ariaexport for the schema.
+function ariaUrl(path, params = {}) {
+  const q = new URLSearchParams(params);
+  if (state.ariaExportToken) q.set("token", state.ariaExportToken); // a plain link/download can't send a header
+  const s = q.toString();
+  return s ? `${path}?${s}` : path;
+}
+
+document.getElementById("save-aria").addEventListener("click", async () => {
+  const status = document.getElementById("aria-status");
+  try {
+    const token = document.getElementById("aria-token").value.trim();
+    const site = document.getElementById("aria-site-label").value.trim();
+    const enabled = document.getElementById("aria-export-enabled-toggle").checked;
+    await saveSettings({ aria_export_token: token, aria_site_label: site, aria_export_enabled: enabled });
+    Object.assign(state, { ariaExportToken: token, ariaSiteLabel: site, ariaExportEnabled: enabled });
+    status.textContent = "Saved.";
+    await renderAriaExports();
+  } catch (e) {
+    status.textContent = `Save failed: ${e.message}`;
+  }
+});
+
+document.getElementById("download-aria").addEventListener("click", () => {
+  const hours = document.getElementById("aria-download-hours").value;
+  const status = document.getElementById("aria-status");
+  status.textContent = "Building the export — a long period across many systems can take a moment…";
+  window.location.href = ariaUrl("/api/aria/export", { download: "1", hours });
+  setTimeout(() => { status.textContent = ""; }, 8000);
+});
+
+async function renderAriaExports() {
+  const el = document.getElementById("aria-export-rows");
+  if (!el) return;
+  try {
+    const rows = await api(ariaUrl("/api/aria/exports"));
+    el.innerHTML = rows.length
+      ? `<div class="toggle-title" style="margin-bottom:8px;">Scheduled export files</div>` +
+        rows.map((r) => `<div class="update-row">
+          <div><div class="update-name">${new Date(r.generated_at).toLocaleString()}</div><div class="update-versions">${r.name} · ${formatBytes(r.size_bytes)}</div></div>
+          <a class="btn" href="${ariaUrl("/api/aria/exports/" + encodeURIComponent(r.name))}">Download</a></div>`).join("")
+      : '<div class="empty-note">No scheduled export files yet.</div>';
+  } catch (e) {
+    el.innerHTML = "";
+  }
+}
 
 function reportHistoryRowHtml(r) {
   const when = new Date(r.generated_at).toLocaleString();

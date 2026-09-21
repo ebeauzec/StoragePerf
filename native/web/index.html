@@ -200,6 +200,44 @@
     </div>
 
     <div class="section-head">
+      <div class="section-title">ARIA Integration</div>
+      <div class="section-note">Hand this site's measured performance to ARIA (the NetApp Active IQ reporting tool an MSP/TAM uses) so their reports can show how systems actually perform, not just what AutoSupport says</div>
+    </div>
+    <div class="config-card retention-card">
+      <div class="toggle-desc" style="margin-bottom:12px;">ARIA can <strong>pull</strong> a snapshot from this Plumb (address <code id="aria-pull-url"></code>) or you can <strong>download</strong> it and send the file where Plumb isn't reachable from them. The snapshot holds per-metric statistics, findings, capacity runway, recent EMS events and, for ONTAP, cluster name and node serial numbers so ARIA can match arrays to its own records. It contains no credentials. Everything else in Plumb stays as open as it was: use a token here and network controls to limit who can pull.</div>
+      <div class="retention-row">
+        <div class="toggle-row-text"><div class="toggle-title">Access token for pulling</div><div class="toggle-desc">When set, ARIA must send it (Authorization: Bearer). Leave blank to allow pulls without one.</div></div>
+        <input id="aria-token" class="retention-input" type="password" autocomplete="off" placeholder="(none)">
+      </div>
+      <div class="retention-row">
+        <div class="toggle-row-text"><div class="toggle-title">Site label</div><div class="toggle-desc">Optional name for this installation, carried in the export so a file is recognizable.</div></div>
+        <input id="aria-site-label" class="retention-input" placeholder="e.g. Dallas data center">
+      </div>
+      <div class="toggle-row nested">
+        <div class="toggle-row-text">
+          <div class="toggle-title">Also write the snapshot to a folder on the schedule above</div>
+          <div class="toggle-desc">Saved to data/aria-exports/ (last 60 kept), daily or weekly per the Scheduled Reports frequency, ready to collect from a file share.</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="aria-export-enabled-toggle">
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+      </div>
+      <div style="margin-top:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-primary" id="save-aria">Save</button>
+        <select id="aria-download-hours" class="retention-select">
+          <option value="24">Last 24 hours</option>
+          <option value="72">Last 3 days</option>
+          <option value="168" selected>Last 7 days</option>
+          <option value="720">Last 30 days</option>
+        </select>
+        <button class="btn" id="download-aria">Download ARIA export</button>
+        <span id="aria-status" class="section-note"></span>
+      </div>
+      <div id="aria-export-rows" style="margin-top:16px;"></div>
+    </div>
+
+    <div class="section-head">
       <div class="section-title">Array Inventory</div>
       <div class="section-note">Edits write to config/arrays.yml and regenerate Prometheus scrape targets immediately</div>
     </div>

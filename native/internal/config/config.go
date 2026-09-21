@@ -305,6 +305,15 @@ type Settings struct {
 	ScheduledReportsEnabled bool    `yaml:"scheduled_reports_enabled,omitempty"`
 	ScheduledReportInterval string  `yaml:"scheduled_report_interval,omitempty"` // "daily" | "weekly"
 	ScheduledReportHours    float64 `yaml:"scheduled_report_hours,omitempty"`    // period each generated report covers
+
+	// ARIA integration (see internal/ariaexport). AriaExportToken, when set,
+	// is required to read /api/aria/*; AriaExportEnabled additionally writes
+	// the snapshot to data/aria-exports/ on the scheduled-report cadence so it
+	// can be collected as a file where Plumb isn't reachable; AriaSiteLabel is
+	// an optional free-text name for this installation carried in the export.
+	AriaExportToken   string `yaml:"aria_export_token,omitempty"`
+	AriaExportEnabled bool   `yaml:"aria_export_enabled,omitempty"`
+	AriaSiteLabel     string `yaml:"aria_site_label,omitempty"`
 }
 
 // ScheduleOptions is the whitelist the Config tab's schedule-frequency

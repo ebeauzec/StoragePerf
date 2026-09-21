@@ -409,6 +409,7 @@ per-metric detail expanded.
 | **Array report** | `/api/reports/array/{id}?hours=N` | One system, min/avg/p95/max per metric, written analysis, overall status |
 | **Fleet report** | `/api/reports/fleet?hours=N` | Every system, ranked worst-first, one-paragraph narrative |
 | **CSV export** | `/api/export/{id}?hours=N` | Raw long-format time series, every metric, for external analysis |
+| **ARIA export** | `/api/aria/export?hours=N` | One JSON snapshot of the whole fleet (statistics, findings, capacity runway, EMS events, ONTAP serial numbers) for the ARIA Active IQ reporting tool — pulled directly or downloaded as a file, optionally written on a schedule. See [ARIA integration](docs/ARIA-INTEGRATION.md) |
 
 All three compute directly from VictoriaMetrics's stored history on request
 — there's no separate findings-history database to fall out of sync. Full

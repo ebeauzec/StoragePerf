@@ -44,6 +44,16 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		})
 	})
 
+	// Cluster identity (name / UUID / version) — read by the ARIA export so a
+	// monitored array can be matched to its Active IQ record exactly.
+	mux.HandleFunc("GET /api/cluster", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"name":    arr.ID,
+			"uuid":    "5d3c1f0e-0000-4000-8000-" + mockSerial(arr.ID, 0),
+			"version": map[string]any{"full": "NetApp Release 9.15.1P7: Mock"},
+		})
+	})
+
 	mux.HandleFunc("GET /api/cluster/nodes", func(w http.ResponseWriter, r *http.Request) {
 		// node_cpu_busy: display = delta(raw)/delta(base)*100 per node, then
 		// summed across nodes for the cluster-wide average — two nodes, one
@@ -60,8 +70,8 @@ func ontapMux(arr mockdata.Array) *http.ServeMux {
 		base2 := counters.accumulate(arr.ID+"|cpu_base|node-2", 100)
 		writeJSON(w, map[string]any{
 			"records": []map[string]any{
-				{"name": arr.ID + "-node-1", "statistics": map[string]any{"processor_utilization_raw": raw1, "processor_utilization_base": base1}},
-				{"name": arr.ID + "-node-2", "statistics": map[string]any{"processor_utilization_raw": raw2, "processor_utilization_base": base2}},
+				{"name": arr.ID + "-node-1", "serial_number": mockSerial(arr.ID, 1), "model": "AFF-A400", "statistics": map[string]any{"processor_utilization_raw": raw1, "processor_utilization_base": base1}},
+				{"name": arr.ID + "-node-2", "serial_number": mockSerial(arr.ID, 2), "model": "AFF-A400", "statistics": map[string]any{"processor_utilization_raw": raw2, "processor_utilization_base": base2}},
 			},
 		})
 	})
@@ -343,4 +353,14 @@ func formatISODuration(totalSeconds float64) string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// mockSerial derives a stable, fake 12-digit node serial from the array ID so
+// the ARIA export's identity block is deterministic across runs in mock mode.
+func mockSerial(arrayID string, node int) string {
+	h := 0
+	for _, c := range arrayID {
+		h = (h*31 + int(c)) % 900000
+	}
+	return fmt.Sprintf("72%06d%04d", h, node)
 }

@@ -144,23 +144,37 @@ func isCapacityMetric(id string) bool {
 // caveat every linear projection needs — real growth is rarely linear —
 // rather than presenting it as a firm prediction.
 func capacityProjection(s rules.Stats) string {
-	if !isCapacityMetric(s.MetricID) || s.TrendSpanSeconds <= 0 {
+	days, ok := ProjectDaysToCritical(s)
+	if !ok {
 		return ""
-	}
-	if s.LastQuarterAvg < s.SeverityWatch || s.SeverityCritical <= s.LastQuarterAvg {
-		return "" // not yet elevated, or already past critical — a projection adds nothing here
-	}
-	ratePerDay := (s.LastQuarterAvg - s.FirstQuarterAvg) / s.TrendSpanSeconds * 86400
-	if ratePerDay <= 0 {
-		return "" // flat or falling — no threshold to project toward
-	}
-	days := (s.SeverityCritical - s.LastQuarterAvg) / ratePerDay
-	if days <= 0 || days > 3650 {
-		return "" // already past it, or the rate is too slow to be a meaningful number
 	}
 	return fmt.Sprintf(
 		"At the rate it grew over this period, it would reach the %.0f%s critical threshold in roughly %s — a linear projection from a short window, not a guarantee, but worth planning around if the trend holds.",
 		s.SeverityCritical, s.Unit, humanDays(days))
+}
+
+// ProjectDaysToCritical is the numeric form of capacityProjection's
+// sentence, exposed for the machine-readable export (internal/api/aria.go)
+// so a consumer gets the same figure the report prints rather than
+// re-deriving it. The same conservative gates apply: only capacity
+// metrics, only once above watch, only when growing, and only when the
+// answer is a meaningful number of days.
+func ProjectDaysToCritical(s rules.Stats) (days float64, ok bool) {
+	if !isCapacityMetric(s.MetricID) || s.TrendSpanSeconds <= 0 {
+		return 0, false
+	}
+	if s.LastQuarterAvg < s.SeverityWatch || s.SeverityCritical <= s.LastQuarterAvg {
+		return 0, false // not yet elevated, or already past critical
+	}
+	ratePerDay := (s.LastQuarterAvg - s.FirstQuarterAvg) / s.TrendSpanSeconds * 86400
+	if ratePerDay <= 0 {
+		return 0, false // flat or falling
+	}
+	days = (s.SeverityCritical - s.LastQuarterAvg) / ratePerDay
+	if days <= 0 || days > 3650 {
+		return 0, false
+	}
+	return days, true
 }
 
 // humanDays renders a day count the way a capacity-planning conversation
