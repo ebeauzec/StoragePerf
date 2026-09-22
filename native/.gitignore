@@ -3,3 +3,4 @@
 /data/
 /config/arrays.yml
 /run/
+/cmd/plumb/resource_windows_*.syso

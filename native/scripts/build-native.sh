@@ -33,9 +33,43 @@ for row in "${TARGETS[@]}"; do
   rm -rf "$outdir"
   mkdir -p "$outdir"
 
+  # Windows only: embed a proper version resource (company/product/file
+  # description) and keep debug symbols, instead of the stripped,
+  # metadata-less binary every other platform gets. A freshly-built,
+  # unsigned Go exe with -s -w and no version info is exactly the shape
+  # Windows Defender's and SmartScreen's cloud-reputation heuristics treat
+  # as suspicious with zero other signal to go on -- confirmed live: a real
+  # user's offline upgrade to v0.20.0 was blocked outright ("the file
+  # contains a virus or potentially unwanted software") on a plumb.exe
+  # with neither. This doesn't make Defender trust a brand-new, unsigned
+  # binary -- only Authenticode signing reliably does that -- but it
+  # removes two known, free-to-fix aggravating factors. resource.syso is
+  # picked up by `go build` automatically for a matching GOOS/GOARCH and
+  # is regenerated (not committed) every build since it's version-stamped.
+  ldflags="-X main.version=${VERSION}"
+  syso=""
+  if [ "$os" = "windows" ]; then
+    IFS='.' read -r ver_major ver_minor ver_patch <<< "$VERSION"
+    syso="cmd/plumb/resource_windows_${arch}.syso"
+    if command -v goversioninfo >/dev/null 2>&1; then
+      goversioninfo \
+        -ver-major="${ver_major:-0}" -ver-minor="${ver_minor:-0}" -ver-patch="${ver_patch:-0}" \
+        -product-version="$VERSION" -file-version="$VERSION" \
+        -o "$syso" cmd/plumb/versioninfo.json
+    else
+      echo "  !! goversioninfo not found (go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest)"
+      echo "     -- shipping this Windows build without version info, which is more likely to trip Defender/SmartScreen"
+      syso=""
+    fi
+  else
+    ldflags="-s -w $ldflags"
+  fi
+
   GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
-    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+    go build -trimpath -ldflags="$ldflags" \
     -o "$outdir/plumb${exe}" ./cmd/plumb
+
+  [ -n "$syso" ] && rm -f "$syso"
 
   # go build normally sets the executable bit on its own output -- this is
   # only needed because this script has been run from Git Bash on Windows
