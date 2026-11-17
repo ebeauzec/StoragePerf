@@ -115,7 +115,33 @@ function ConvertTo-PlumbVersion {
     try { return [version]$Text } catch { return $null }
 }
 
+# A previous Plumb (this run.bat, a prior window that was closed without
+# actually stopping the process, or one started some other way) can still
+# be holding :8000 and its sidecars' internal ports (mock-backend listeners,
+# VictoriaMetrics, Prometheus) when this script runs again. Starting a
+# second copy on top of that doesn't fail cleanly -- it gets partway through
+# its own startup (sidecars spawn fine on their own ports) before crashing
+# on the first port collision it hits, which for anyone running mock data
+# is a mock-backend listener, not :8000 itself, so the resulting error
+# message never mentions the real cause. Detecting the live instance first
+# and just reusing it (opening the browser, same as a successful start
+# would) turns "fails for an unclear reason" into "already running",
+# which is what actually happened.
+function Test-PlumbAlreadyRunning {
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/version" -TimeoutSec 2 -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Start-Plumb {
+    if (Test-PlumbAlreadyRunning) {
+        Write-Host "==> Plumb is already running at http://localhost:8000 -- opening it instead of starting a second copy"
+        Start-Process "http://localhost:8000"
+        return
+    }
     Write-Host "==> Starting Plumb - http://localhost:8000"
     Push-Location $Dest
     try {
