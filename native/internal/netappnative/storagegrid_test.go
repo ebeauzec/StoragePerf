@@ -20,7 +20,7 @@ func newStorageGridServer(t *testing.T, fixtures map[string]float64, authFailure
 	authCalls := 0
 	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == "POST" && r.URL.Path == "/api/v3/authorize":
+		case r.Method == "POST" && r.URL.Path == "/api/v4/authorize":
 			authCalls++
 			if authCalls <= authFailures {
 				// simulate a bad login attempt that should surface as an error
@@ -29,7 +29,7 @@ func newStorageGridServer(t *testing.T, fixtures map[string]float64, authFailure
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"data": "test-token-" + string(rune('0'+authCalls))})
-		case r.URL.Path == "/api/v3/grid/metric-query":
+		case r.URL.Path == "/api/v4/grid/metric-query":
 			auth := r.Header.Get("Authorization")
 			if !strings.HasPrefix(auth, "Bearer test-token-") {
 				w.WriteHeader(401)
@@ -116,13 +116,13 @@ func TestStorageGrid_TokenExpiryRetriesLoginOnce(t *testing.T) {
 	firstTokenRejected := false
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.URL.Path == "/api/v3/authorize":
+		case r.URL.Path == "/api/v4/authorize":
 			tok := "token-A"
 			if firstTokenRejected {
 				tok = "token-B"
 			}
 			json.NewEncoder(w).Encode(map[string]any{"data": tok})
-		case r.URL.Path == "/api/v3/grid/metric-query":
+		case r.URL.Path == "/api/v4/grid/metric-query":
 			if r.Header.Get("Authorization") == "Bearer token-A" {
 				firstTokenRejected = true
 				w.WriteHeader(401)

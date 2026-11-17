@@ -45,7 +45,13 @@ const RANGES = [
   { label: "1Y", hours: 24 * 365 },
 ];
 
-const healthColor = (h) => (h === "critical" ? "#f0526e" : h === "watch" ? "#f0aa3a" : h === "good" ? "#3ecb7a" : "#5c6675");
+// Reads a CSS custom property's live value (not a hardcoded hex) so inline
+// SVG — which can't reference var() — still follows whichever theme
+// #theme-toggle currently has active. Re-read on every render rather than
+// cached, since the whole point is picking up a theme flip between renders.
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const healthColor = (h) => (h === "critical" ? cssVar("--critical") : h === "watch" ? cssVar("--warn") : h === "good" ? cssVar("--good") : cssVar("--text-dim"));
 const healthChip = (h) =>
   h === "critical" ? '<span class="chip chip-critical">Critical</span>'
   : h === "watch" ? '<span class="chip chip-watch">Watch</span>'
@@ -70,10 +76,10 @@ function fmt(value, digits = 1) {
 }
 
 /* ---------------- SVG chart ---------------- */
-function svgLine(series, { w = 560, h = 64, color = "#45d0c4", threshold = null, thresholdColor = "#5c6675" } = {}) {
+function svgLine(series, { w = 560, h = 64, color = cssVar("--accent-fe"), threshold = null, thresholdColor = cssVar("--text-dim") } = {}) {
   const fillId = "f" + Math.random().toString(36).slice(2);
   if (!series || series.length < 2) {
-    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}"><text x="8" y="${h / 2}" fill="#5c6675" font-size="11">no data yet</text></svg>`;
+    return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}"><text x="8" y="${h / 2}" fill="${cssVar("--text-dim")}" font-size="11">no data yet</text></svg>`;
   }
   const values = series.map((p) => p[1]);
   const max = Math.max(...values, threshold || 0) * 1.15 || 1;
@@ -82,8 +88,9 @@ function svgLine(series, { w = 560, h = 64, color = "#45d0c4", threshold = null,
   const y = (v) => h - ((v - min) / (max - min || 1)) * h;
   const path = series.map((p, i) => (i === 0 ? "M" : "L") + x(i).toFixed(1) + "," + y(p[1]).toFixed(1)).join(" ");
   const area = path + ` L${w},${h} L0,${h} Z`;
+  const gridColor = cssVar("--border-soft");
   const grid = [0.25, 0.5, 0.75]
-    .map((f) => `<line x1="0" x2="${w}" y1="${(h * f).toFixed(1)}" y2="${(h * f).toFixed(1)}" stroke="#28323e" stroke-width="1" stroke-dasharray="2,4"/>`)
+    .map((f) => `<line x1="0" x2="${w}" y1="${(h * f).toFixed(1)}" y2="${(h * f).toFixed(1)}" stroke="${gridColor}" stroke-width="1" stroke-dasharray="2,4"/>`)
     .join("");
   const thresholdLine = threshold !== null ? `<line x1="0" x2="${w}" y1="${y(threshold).toFixed(1)}" y2="${y(threshold).toFixed(1)}" stroke="${thresholdColor}" stroke-width="1" stroke-dasharray="4,3"/>` : "";
   const last = values[values.length - 1];
@@ -208,7 +215,7 @@ function renderRangePills() {
 
 /* ---------------- panels + findings for selected array ---------------- */
 function panelHtml(p, systemLabel) {
-  const color = p.category === "frontend" ? "#45d0c4" : "#7c8fef";
+  const color = p.category === "frontend" ? cssVar("--accent-fe") : cssVar("--accent-be");
   // Informational panels (IOPS/bandwidth/ops-rate — "workload characterization,
   // not an alert to tune on its own", per each metric's own config comment)
   // never carry watch/critical severity from the API, but still deserve a
@@ -969,10 +976,10 @@ document.getElementById("retention-select").addEventListener("change", async (e)
 function updateRowHtml(u) {
   const badge =
     u.update_available === true
-      ? '<span class="update-badge chip-watch" style="background:rgba(240,170,58,0.14);color:var(--warn);">Update available</span>'
+      ? '<span class="update-badge chip-watch">Update available</span>'
       : u.update_available === false
-      ? '<span class="update-badge chip-good" style="background:rgba(62,203,122,0.12);color:var(--good);">Up to date</span>'
-      : '<span class="update-badge" style="background:rgba(140,150,165,0.1);color:var(--text-dim);">' + (u.status || "unknown") + "</span>";
+      ? '<span class="update-badge chip-good">Up to date</span>'
+      : '<span class="update-badge chip-unknown">' + (u.status || "unknown") + "</span>";
   // Plumb is the one row that can actually be acted on — every other
   // check here (sidecars, vendor metric-schema references) stays purely
   // informational, per the panel's own "check-and-notify" promise.
@@ -1173,6 +1180,38 @@ async function loadVersion() {
   }
 }
 
+/* ---------------- theme (light/dark) ---------------- */
+// Manual toggle only, no prefers-color-scheme auto-detect: this remains a
+// console that defaults to dark (its original design intent — see the old
+// removed "deliberate dark-only console" comment at the top of styles.css)
+// unless a user explicitly asks for light, same as ARIA/AutoTAM's own
+// toggle. The choice persists per-browser via localStorage, not server-side
+// settings — it's a viewing preference, not fleet configuration.
+function initTheme() {
+  const stored = localStorage.getItem("plumb-theme");
+  if (stored === "light") document.documentElement.setAttribute("data-theme", "light");
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    const isLight = document.documentElement.getAttribute("data-theme") === "light";
+    if (isLight) {
+      document.documentElement.removeAttribute("data-theme");
+      localStorage.setItem("plumb-theme", "dark");
+      btn.setAttribute("aria-label", "Switch to light theme");
+    } else {
+      document.documentElement.setAttribute("data-theme", "light");
+      localStorage.setItem("plumb-theme", "light");
+      btn.setAttribute("aria-label", "Switch to dark theme");
+    }
+    // Inline SVG (sparklines, health dots) reads colors via cssVar() at
+    // render time rather than CSS var(), so it needs an explicit
+    // re-render to pick up the new theme immediately rather than waiting
+    // for the next 15s tick().
+    renderFleetView();
+  });
+}
+
+initTheme();
 renderFleetSortPills();
 tick();
 syncMockPill();

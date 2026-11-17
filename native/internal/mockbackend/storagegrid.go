@@ -21,11 +21,11 @@ func storagegridMux(arr mockdata.Array) *http.ServeMux {
 	counters := newCounterAccumulator()
 	const token = "mock-token"
 
-	mux.HandleFunc("POST /api/v3/authorize", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/v4/authorize", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"responseTime": time.Now().Format(time.RFC3339), "status": "success", "apiVersion": "3.2", "data": token})
 	})
 
-	mux.HandleFunc("GET /api/v3/grid/metric-query", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/v4/grid/metric-query", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+token {
 			w.WriteHeader(http.StatusUnauthorized)
 			return

@@ -70,7 +70,7 @@ func (c *StorageGridCollector) login(client *http.Client, arr config.Array) (str
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequest("POST", "https://"+arr.ManagementLIF+"/api/v3/authorize", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", "https://"+arr.ManagementLIF+"/api/v4/authorize", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -146,7 +146,7 @@ func (c *StorageGridCollector) queryRaw(client *http.Client, arr config.Array, p
 		if err != nil {
 			return promInstantResponse{}, err
 		}
-		u := "https://" + arr.ManagementLIF + "/api/v3/grid/metric-query?query=" + url.QueryEscape(promql)
+		u := "https://" + arr.ManagementLIF + "/api/v4/grid/metric-query?query=" + url.QueryEscape(promql)
 		req, err := http.NewRequest("GET", u, nil)
 		if err != nil {
 			return promInstantResponse{}, err
@@ -208,7 +208,7 @@ type nodeSample struct {
 //
 // StorageGRID's own Grid Management API docs don't publish a label schema
 // for these metrics directly, but its metric-labels endpoint
-// (/api/v3/grid/metric-labels/instance/values) confirms "instance" —
+// (/api/v4/grid/metric-labels/instance/values) confirms "instance" —
 // Prometheus's standard scrape-target label — is what identifies which
 // node a sample came from: the Admin Node's Prometheus scrapes each node's
 // own local exporters, so every series it collects gets tagged with that

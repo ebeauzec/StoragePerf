@@ -25,8 +25,8 @@ launches them as child processes; it does not modify or relink them.
 
 | Component | Version pinned | License | Copyright | Source |
 |---|---|---|---|---|
-| **Prometheus** | v3.14.0 | Apache License 2.0 | The Prometheus Authors | https://github.com/prometheus/prometheus |
-| **VictoriaMetrics** | v1.150.0 (community/single-node edition) | Apache License 2.0 | VictoriaMetrics, Inc. | https://github.com/VictoriaMetrics/VictoriaMetrics |
+| **Prometheus** | v3.16.0 | Apache License 2.0 | The Prometheus Authors | https://github.com/prometheus/prometheus |
+| **VictoriaMetrics** | v1.156.0 (community/single-node edition) | Apache License 2.0 | VictoriaMetrics, Inc. | https://github.com/VictoriaMetrics/VictoriaMetrics |
 
 Per Apache License 2.0 §4, the full license text for each is included at
 [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt), and this notice

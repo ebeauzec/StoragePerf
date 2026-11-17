@@ -1,6 +1,6 @@
 services:
   victoriametrics:
-    image: victoriametrics/victoria-metrics:v1.150.0
+    image: victoriametrics/victoria-metrics:v1.156.0
     command:
       - "--storageDataPath=/storage"
       - "--retentionPeriod=100y"
@@ -10,7 +10,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:v3.14.0
+    image: prom/prometheus:v3.16.0
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-targets:/etc/prometheus/targets
