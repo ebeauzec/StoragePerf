@@ -268,8 +268,17 @@ func main() {
 	go app.RunMonitor(5*time.Minute, stopMonitor)
 	defer close(stopMonitor)
 
+	// Defaults to loopback-only: the API has no authentication on most
+	// routes (self-update, full config read/write, raw metrics backup) and
+	// is only safe to expose beyond this machine if you understand that.
+	// Set PLUMB_LISTEN_ADDR=0.0.0.0 (or a specific interface) to opt back
+	// into LAN/remote access.
+	listenHost := os.Getenv("PLUMB_LISTEN_ADDR")
+	if listenHost == "" {
+		listenHost = "127.0.0.1"
+	}
 	srv := &http.Server{
-		Addr:    "0.0.0.0:" + listenPort,
+		Addr:    listenHost + ":" + listenPort,
 		Handler: app.Routes(),
 		// ReadHeaderTimeout/IdleTimeout only, deliberately no
 		// ReadTimeout/WriteTimeout: this server also serves PDF/CSV

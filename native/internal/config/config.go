@@ -5,9 +5,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -59,6 +61,19 @@ type arraysFile struct {
 
 func arraysPath(configDir string) string { return filepath.Join(configDir, "arrays.yml") }
 
+// ErrInvalidArray wraps every array-config validation failure, so callers
+// (the config-save HTTP handler) can tell it apart from an I/O error and
+// respond 400 instead of 500.
+var ErrInvalidArray = errors.New("invalid array")
+
+// validArrayID matches every array ID this repo generates (e.g.
+// "mock-fa-prod-east-01") and rejects anything else. IDs are spliced
+// directly into PromQL via strings.ReplaceAll(query, "{array}", id) all
+// over internal/rules, internal/export, and internal/api — an ID outside
+// this charset (quotes, braces, whitespace) could otherwise inject
+// arbitrary PromQL into a report, export, or dashboard query.
+var validArrayID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
 func LoadArrays(configDir string) ([]Array, error) {
 	b, err := os.ReadFile(arraysPath(configDir))
 	if err != nil {
@@ -75,6 +90,11 @@ func LoadArrays(configDir string) ([]Array, error) {
 }
 
 func SaveArrays(configDir string, arrays []Array) error {
+	for _, a := range arrays {
+		if !validArrayID.MatchString(a.ID) {
+			return fmt.Errorf("%w: id %q must match %s", ErrInvalidArray, a.ID, validArrayID.String())
+		}
+	}
 	b, err := yaml.Marshal(arraysFile{Arrays: arrays})
 	if err != nil {
 		return err

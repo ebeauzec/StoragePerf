@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -123,6 +124,15 @@ func (c *Client) RangeQuery(promql string, start, end time.Time, step time.Durat
 	}
 	if len(qr.Data.Result) == 0 {
 		return nil, nil
+	}
+	if len(qr.Data.Result) > 1 {
+		// A threshold query is expected to resolve to exactly one series per
+		// array; if it doesn't (a missing label matcher, or the metric
+		// gained a new label dimension upstream), every series past the
+		// first used to be silently discarded, producing a quietly wrong or
+		// incomplete chart with no indication why. Still returns Result[0]
+		// (best-effort), but now it's visible in the log.
+		log.Printf("vm: RangeQuery %q matched %d series, expected 1 — using the first and discarding the rest", promql, len(qr.Data.Result))
 	}
 	pts := make([]Point, 0, len(qr.Data.Result[0].Values))
 	for _, v := range qr.Data.Result[0].Values {

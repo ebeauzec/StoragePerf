@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -450,7 +451,11 @@ func (a *App) handlePutArraysConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := config.SaveArrays(a.ConfigDir, payload.Arrays); err != nil {
-		httpError(w, 500, err)
+		status := 500
+		if errors.Is(err, config.ErrInvalidArray) {
+			status = 400
+		}
+		httpError(w, status, err)
 		return
 	}
 	if err := a.regenerate(); err != nil {

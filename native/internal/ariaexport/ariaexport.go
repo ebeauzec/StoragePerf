@@ -169,9 +169,12 @@ func Downsample(pts [][2]float64, max int) [][2]float64 {
 }
 
 // Authorized decides whether a request may read the export. With no token
-// configured it allows everyone — the rest of Plumb's API is equally open and
-// is meant to sit on a trusted network — and once a token is set it must be
-// presented as a Bearer header, an X-Plumb-Token header, or ?token=.
+// configured it allows everyone — the rest of Plumb's API is equally open,
+// and the server defaults to listening on loopback only (see
+// PLUMB_LISTEN_ADDR in cmd/plumb/main.go), so "everyone" means "this
+// machine" unless an operator has explicitly opted into LAN/remote access —
+// and once a token is set it must be presented as a Bearer header, an
+// X-Plumb-Token header, or ?token=.
 func Authorized(r *http.Request, token string) bool {
 	if token == "" {
 		return true
